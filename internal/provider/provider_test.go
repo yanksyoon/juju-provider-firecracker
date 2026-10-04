@@ -1,9 +1,11 @@
 package provider
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/canonical/juju-provider-firecracker/internal/firecracker"
 	"github.com/juju/juju/cloudconfig/instancecfg"
 	"github.com/juju/juju/core/instance"
 	"github.com/juju/juju/environs"
@@ -38,11 +40,16 @@ type fakeVM struct {
 	ids              []string
 	startErr         error
 	stopErr          error
+	request          firecracker.VMRequest
 }
 
-func (f *fakeVM) StartVM(id, _, _ string) error { f.started = append(f.started, id); return f.startErr }
-func (f *fakeVM) StopVM(id string) error        { f.stopped = append(f.stopped, id); return f.stopErr }
-func (f *fakeVM) ListVMs() []string             { return append([]string(nil), f.ids...) }
+func (f *fakeVM) StartVM(_ context.Context, request firecracker.VMRequest) error {
+	f.request = request
+	f.started = append(f.started, request.ID)
+	return f.startErr
+}
+func (f *fakeVM) StopVM(id string) error { f.stopped = append(f.stopped, id); return f.stopErr }
+func (f *fakeVM) ListVMs() []string      { return append([]string(nil), f.ids...) }
 
 func testConfig() Config {
 	return Config{
@@ -76,6 +83,9 @@ func TestLifecycleOrchestratesDependenciesAndRollsBack(t *testing.T) {
 	}
 	if len(net.setup) != 1 || net.setup[0] != "machine-1" || meta.id != "machine-1" || len(meta.data) == 0 || len(vm.started) != 1 {
 		t.Fatalf("unexpected calls: setup=%v metadata=%q start=%v", net.setup, meta.id, vm.started)
+	}
+	if vm.request.ID != "machine-1" || vm.request.KernelPath != cfg.KernelImagePath || vm.request.RootFSPath != cfg.RootFSPath || vm.request.TapName != "tap0" || vm.request.VCPU != 1 || vm.request.MemoryMiB != 512 {
+		t.Fatalf("manager did not receive typed SDK request: %+v", vm.request)
 	}
 	if err := p.StopInstances(nil, "machine-1"); err != nil {
 		t.Fatal(err)

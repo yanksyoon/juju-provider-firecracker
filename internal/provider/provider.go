@@ -2,10 +2,11 @@
 package provider
 
 import (
+	"context"
 	"crypto/sha256"
-	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -36,7 +37,7 @@ type Metadata interface{ RegisterPayload(string, []byte) }
 
 // VMManager is the portion of Firecracker used by the provider.
 type VMManager interface {
-	StartVM(string, string, string) error
+	StartVM(context.Context, firecracker.VMRequest) error
 	StopVM(string) error
 	ListVMs() []string
 }
@@ -54,16 +55,23 @@ type Options struct {
 // FirecrackerProvider is intentionally a thin orchestration layer. It owns no
 // Juju credentials and performs no calls to a live controller.
 type FirecrackerProvider struct {
-	network                                      Network
-	metadata                                     Metadata
-	vm                                           VMManager
-	configDir, socketDir, kernelPath, rootFSPath string
-	mu                                           sync.RWMutex
-	instances                                    map[instance.Id]*FirecrackerInstance
+	network              Network
+	metadata             Metadata
+	vm                   VMManager
+	configDir, socketDir string
+	config               Config
+	mu                   sync.RWMutex
+	instances            map[instance.Id]*FirecrackerInstance
 }
 
 func New(opts Options) (*FirecrackerProvider, error) {
 	cfg := opts.Config
+	if cfg.VCPU <= 0 {
+		cfg.VCPU = 1
+	}
+	if cfg.MemoryMiB <= 0 {
+		cfg.MemoryMiB = 512
+	}
 
 	if opts.Network == nil {
 		mgr, err := network.NewCNIManagerWithOptions(cfg.CNIConfigPath, network.CNIOptions{})
@@ -77,7 +85,6 @@ func New(opts Options) (*FirecrackerProvider, error) {
 	}
 	if opts.VM == nil {
 		opts.VM = firecracker.NewFirecrackerManagerWithOptions(cfg.CgroupBase, firecracker.Options{
-			Command:         cfg.FirecrackerBinary,
 			StopTimeout:     cfg.StopTimeout,
 			ShutdownTimeout: cfg.ShutdownTimeout,
 		})
@@ -91,8 +98,8 @@ func New(opts Options) (*FirecrackerProvider, error) {
 	}
 
 	return &FirecrackerProvider{network: opts.Network, metadata: opts.Metadata, vm: opts.VM,
-		configDir: cfg.ConfigDir, socketDir: cfg.SocketDir, kernelPath: cfg.KernelImagePath,
-		rootFSPath: cfg.RootFSPath, instances: make(map[instance.Id]*FirecrackerInstance)}, nil
+		configDir: cfg.ConfigDir, socketDir: cfg.SocketDir, config: cfg,
+		instances: make(map[instance.Id]*FirecrackerInstance)}, nil
 }
 
 var _ environs.InstanceBroker = (*FirecrackerProvider)(nil)
@@ -117,11 +124,16 @@ func (p *FirecrackerProvider) StartInstance(_ jujucontext.ProviderCallContext, a
 	}()
 	payload := []byte(fmt.Sprintf("#!/bin/sh\n# Juju machine %s\n", id))
 	p.metadata.RegisterPayload(string(id), payload)
-	configPath, socketPath, err := p.writeConfig(id, ip, tap)
-	if err != nil {
-		return nil, err
+	socketPath := filepath.Join(p.socketDir, string(id)+".sock")
+	_, networkCIDR, _ := net.ParseCIDR(ip + "/32")
+	request := firecracker.VMRequest{ID: string(id), SocketPath: socketPath,
+		KernelPath: p.config.KernelImagePath, RootFSPath: p.config.RootFSPath,
+		TapName: tap, MACAddress: macForID(string(id)), VCPU: p.config.VCPU,
+		MemoryMiB: p.config.MemoryMiB, KernelArgs: p.config.KernelArgs}
+	if networkCIDR != nil {
+		request.IP = *networkCIDR
 	}
-	if err := p.vm.StartVM(string(id), socketPath, configPath); err != nil {
+	if err := p.vm.StartVM(context.Background(), request); err != nil {
 		return nil, fmt.Errorf("start VM %q: %w", id, err)
 	}
 	inst := &FirecrackerInstance{id: id, ip: ip, status: "running"}
@@ -130,34 +142,6 @@ func (p *FirecrackerProvider) StartInstance(_ jujucontext.ProviderCallContext, a
 	p.mu.Unlock()
 	rollback = false
 	return &environs.StartInstanceResult{Instance: inst}, nil
-}
-
-func (p *FirecrackerProvider) writeConfig(id instance.Id, ip, tap string) (string, string, error) {
-	if err := os.MkdirAll(p.configDir, 0700); err != nil {
-		return "", "", fmt.Errorf("create config directory: %w", err)
-	}
-	if err := os.MkdirAll(p.socketDir, 0700); err != nil {
-		return "", "", fmt.Errorf("create socket directory: %w", err)
-	}
-	configPath := filepath.Join(p.configDir, string(id)+".json")
-	socketPath := filepath.Join(p.socketDir, string(id)+".sock")
-	cfg := struct {
-		KernelImagePath  string `json:"kernel_image_path"`
-		RootFS           string `json:"rootfs"`
-		NetworkInterface string `json:"network_interface"`
-		IP               string `json:"ip"`
-		MACAddress       string `json:"mac_address"`
-		VCPU             int64  `json:"vcpu"`
-		MemoryMiB        int64  `json:"memory_mib"`
-	}{p.kernelPath, p.rootFSPath, tap, ip, macForID(string(id)), 1, 512}
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return "", "", err
-	}
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
-		return "", "", fmt.Errorf("write VM config: %w", err)
-	}
-	return configPath, socketPath, nil
 }
 
 // macForID gives the guest a stable locally-administered address. CNI remains

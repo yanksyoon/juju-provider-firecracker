@@ -3,7 +3,6 @@ package firecracker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -12,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	sdk "github.com/firecracker-microvm/firecracker-go-sdk"
@@ -20,14 +18,6 @@ import (
 )
 
 const defaultStopTimeout = 5 * time.Second
-
-// Process is retained as a narrow unit-test seam. Production uses MachineIface.
-type Process interface {
-	Start() error
-	PID() int
-	Signal(os.Signal) error
-	Wait() error
-}
 
 type FileSystem interface {
 	MkdirAll(path string, perm os.FileMode) error
@@ -78,18 +68,14 @@ func SDKConfig(r VMRequest) (sdk.Config, error) {
 
 type managedMachine struct {
 	machine  sdk.MachineIface
-	process  Process
 	cgroup   string
 	waitDone chan error
 }
 
 type Options struct {
-	// Command and NewProcess are compatibility test seams only; production ignores them.
-	Command         string
 	StopTimeout     time.Duration
 	ShutdownTimeout time.Duration
 	FS              FileSystem
-	NewProcess      func(command string, args ...string) (Process, error)
 	NewMachine      machineFactory
 }
 
@@ -100,7 +86,6 @@ type FirecrackerManager struct {
 	cgroupBase                   string
 	stopTimeout, shutdownTimeout time.Duration
 	fs                           FileSystem
-	newProcess                   func(string, ...string) (Process, error)
 	newMachine                   machineFactory
 }
 
@@ -120,61 +105,33 @@ func NewFirecrackerManagerWithOptions(cgroupBase string, opts Options) *Firecrac
 	if opts.NewMachine == nil {
 		opts.NewMachine = func(ctx context.Context, cfg sdk.Config) (sdk.MachineIface, error) { return sdk.NewMachine(ctx, cfg) }
 	}
-	return &FirecrackerManager{machines: map[string]managedMachine{}, starting: map[string]chan struct{}{}, cgroupBase: filepath.Clean(cgroupBase), stopTimeout: opts.StopTimeout, shutdownTimeout: opts.ShutdownTimeout, fs: opts.FS, newProcess: opts.NewProcess, newMachine: opts.NewMachine}
+	return &FirecrackerManager{machines: map[string]managedMachine{}, starting: map[string]chan struct{}{}, cgroupBase: filepath.Clean(cgroupBase), stopTimeout: opts.StopTimeout, shutdownTimeout: opts.ShutdownTimeout, fs: opts.FS, newMachine: opts.NewMachine}
 }
 
-type configFile struct {
-	KernelImagePath  string `json:"kernel_image_path"`
-	RootFS           string `json:"rootfs"`
-	NetworkInterface string `json:"network_interface"`
-	IP               string `json:"ip"`
-	MACAddress       string `json:"mac_address"`
-	VCPU             int64  `json:"vcpu"`
-	MemoryMiB        int64  `json:"memory_mib"`
-	KernelArgs       string `json:"kernel_args"`
-}
-
-func requestFromFile(id, socketPath, configPath string) (VMRequest, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return VMRequest{}, fmt.Errorf("read VM config: %w", err)
-	}
-	var c configFile
-	if err := json.Unmarshal(data, &c); err != nil {
-		return VMRequest{}, fmt.Errorf("decode VM config: %w", err)
-	}
-	var ipnet net.IPNet
-	if c.IP != "" {
-		ip, n, err := net.ParseCIDR(c.IP)
-		if err != nil {
-			return VMRequest{}, fmt.Errorf("invalid VM IP: %w", err)
-		}
-		n.IP = ip
-		ipnet = *n
-	}
-	return VMRequest{ID: id, SocketPath: socketPath, KernelPath: c.KernelImagePath, RootFSPath: c.RootFS, TapName: c.NetworkInterface, MACAddress: c.MACAddress, IP: ipnet, VCPU: c.VCPU, MemoryMiB: c.MemoryMiB, KernelArgs: c.KernelArgs}, nil
-}
-
-func (m *FirecrackerManager) StartVM(id, socketPath, configPath string) error {
-	if err := validID(id); err != nil {
+func (m *FirecrackerManager) StartVM(ctx context.Context, r VMRequest) error {
+	if err := validID(r.ID); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	if _, ok := m.machines[id]; ok {
-		m.mu.Unlock()
-		return fmt.Errorf("VM %q is already running", id)
+	cfg, err := SDKConfig(r)
+	if err != nil {
+		return fmt.Errorf("map VM %q to SDK config: %w", r.ID, err)
 	}
-	if _, ok := m.starting[id]; ok {
+	m.mu.Lock()
+	if _, ok := m.machines[r.ID]; ok {
 		m.mu.Unlock()
-		return fmt.Errorf("VM %q is already starting", id)
+		return fmt.Errorf("VM %q is already running", r.ID)
+	}
+	if _, ok := m.starting[r.ID]; ok {
+		m.mu.Unlock()
+		return fmt.Errorf("VM %q is already starting", r.ID)
 	}
 	done := make(chan struct{})
-	m.starting[id] = done
+	m.starting[r.ID] = done
 	m.mu.Unlock()
-	defer func() { m.mu.Lock(); delete(m.starting, id); close(done); m.mu.Unlock() }()
-	cgroup := filepath.Join(m.cgroupBase, id)
+	defer func() { m.mu.Lock(); delete(m.starting, r.ID); close(done); m.mu.Unlock() }()
+	cgroup := filepath.Join(m.cgroupBase, r.ID)
 	if err := m.fs.MkdirAll(cgroup, 0755); err != nil {
-		return fmt.Errorf("create cgroup for %q: %w", id, err)
+		return fmt.Errorf("create cgroup for %q: %w", r.ID, err)
 	}
 	cleanup := true
 	defer func() {
@@ -182,49 +139,19 @@ func (m *FirecrackerManager) StartVM(id, socketPath, configPath string) error {
 			_ = m.fs.RemoveAll(cgroup)
 		}
 	}()
-	if m.newProcess != nil { // only injected tests use the old process seam
-		// This branch exists only for injected unit-test processes. The production
-		// path below is exclusively SDK-backed and does not construct CLI flags.
-		proc, err := m.newProcess("", socketPath, configPath)
-		if err != nil {
-			return err
-		}
-		if err = proc.Start(); err != nil {
-			return err
-		}
-		if proc.PID() <= 0 {
-			return errors.New("Firecracker started without a valid PID")
-		}
-		if err = m.fs.WriteFile(filepath.Join(cgroup, "cgroup.procs"), []byte(fmt.Sprintf("%d\n", proc.PID())), 0644); err != nil {
-			return err
-		}
-		m.mu.Lock()
-		m.machines[id] = managedMachine{process: proc, cgroup: cgroup}
-		m.mu.Unlock()
-		cleanup = false
-		return nil
-	}
-	r, err := requestFromFile(id, socketPath, configPath)
+	cfg.JailerCfg = &sdk.JailerConfig{ID: r.ID, CgroupVersion: "2"}
+	machine, err := m.newMachine(ctx, cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("create VM %q: %w", r.ID, err)
 	}
-	cfg, err := SDKConfig(r)
-	if err != nil {
-		return fmt.Errorf("map VM %q to SDK config: %w", id, err)
-	}
-	cfg.JailerCfg = &sdk.JailerConfig{ID: id, CgroupVersion: "2"}
-	machine, err := m.newMachine(context.Background(), cfg)
-	if err != nil {
-		return fmt.Errorf("create VM %q: %w", id, err)
-	}
-	if err := machine.Start(context.Background()); err != nil {
+	if err := machine.Start(ctx); err != nil {
 		_ = machine.StopVMM()
-		return fmt.Errorf("start VM %q: %w", id, err)
+		return fmt.Errorf("start VM %q: %w", r.ID, err)
 	}
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- machine.Wait(context.Background()) }()
 	m.mu.Lock()
-	m.machines[id] = managedMachine{machine: machine, cgroup: cgroup, waitDone: waitDone}
+	m.machines[r.ID] = managedMachine{machine: machine, cgroup: cgroup, waitDone: waitDone}
 	m.mu.Unlock()
 	cleanup = false
 	return nil
@@ -249,16 +176,7 @@ func (m *FirecrackerManager) StopVM(id string) error {
 }
 func (m *FirecrackerManager) stopMachine(id string, e managedMachine) error {
 	var first error
-	if e.process != nil {
-		wait := make(chan error, 1)
-		go func() { wait <- e.process.Wait() }()
-		_ = e.process.Signal(syscall.SIGTERM)
-		select {
-		case <-wait:
-		case <-time.After(m.stopTimeout):
-			_ = e.process.Signal(syscall.SIGKILL)
-		}
-	} else if e.machine != nil {
+	if e.machine != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), m.shutdownTimeout)
 		err := e.machine.Shutdown(ctx)
 		cancel()

@@ -203,9 +203,12 @@ All operator-configurable values are consolidated in `internal/provider/config.g
 |---|---|---|
 | `kernel-image-path` | *(required)* | Guest kernel image (vmlinux) |
 | `rootfs-path` | *(required)* | Guest root filesystem image |
-| `firecracker-binary` | `firecracker` | Firecracker binary (absolute or PATH) |
+
 | `cni-config-path` | `/etc/cni/net.d/juju-fc.conflist` | CNI conflist |
 | `cni-bin-dirs` | `/opt/cni/bin:/usr/lib/cni:/usr/libexec/cni` | CNI plugin directories |
+| `vcpu` | `1` | Guest virtual CPUs |
+| `memory-mib` | `512` | Guest memory |
+| `kernel-args` | *(empty)* | Guest kernel command line |
 | `cgroup-base` | `/sys/fs/cgroup/juju-fc` | cgroup v2 base path |
 | `config-dir` | `/var/lib/juju-firecracker/configs` | Per-VM config directory |
 | `socket-dir` | `/var/lib/juju-firecracker/sockets` | Per-VM API socket directory |
@@ -218,7 +221,7 @@ All operator-configurable values are consolidated in `internal/provider/config.g
 
 | Variable | Overrides |
 |---|---|
-| `JUJU_FC_FIRECRACKER_BINARY` | `firecracker-binary` |
+
 | `JUJU_FC_KERNEL_IMAGE_PATH` | `kernel-image-path` |
 | `JUJU_FC_ROOTFS_PATH` | `rootfs-path` |
 | `JUJU_FC_CNI_CONFIG_PATH` | `cni-config-path` |

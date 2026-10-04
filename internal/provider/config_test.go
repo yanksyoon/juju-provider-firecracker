@@ -9,8 +9,8 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.FirecrackerBinary != "firecracker" {
-		t.Fatalf("FirecrackerBinary = %q", cfg.FirecrackerBinary)
+	if cfg.VCPU != 1 || cfg.MemoryMiB != 512 {
+		t.Fatalf("SDK sizing defaults = %d/%d", cfg.VCPU, cfg.MemoryMiB)
 	}
 	if cfg.CNIConfigPath != "/etc/cni/net.d/juju-fc.conflist" {
 		t.Fatalf("CNIConfigPath = %q", cfg.CNIConfigPath)

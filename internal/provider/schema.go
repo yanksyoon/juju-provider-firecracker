@@ -11,11 +11,6 @@ import (
 const providerType = "firecracker"
 
 var configSchema = environschema.Fields{
-	"firecracker-binary": {
-		Description: "Path to the Firecracker binary (absolute, or bare name on PATH)",
-		Type:        environschema.Tstring,
-		Group:       environschema.ProviderGroup,
-	},
 	"kernel-image-path": {
 		Description: "Path to the kernel image for Firecracker VMs",
 		Type:        environschema.Tstring,
@@ -71,10 +66,13 @@ var configSchema = environschema.Fields{
 		Type:        environschema.Tstring,
 		Group:       environschema.ProviderGroup,
 	},
+	"vcpu":        {Description: "Number of virtual CPUs", Type: environschema.Tint, Group: environschema.ProviderGroup},
+	"memory-mib":  {Description: "Guest memory in MiB", Type: environschema.Tint, Group: environschema.ProviderGroup},
+	"kernel-args": {Description: "Guest kernel command line", Type: environschema.Tstring, Group: environschema.ProviderGroup},
 }
 
 var configDefaults = schema.Defaults{
-	"firecracker-binary":   "firecracker",
+
 	"cni-config-path":      "/etc/cni/net.d/juju-fc.conflist",
 	"cni-bin-dirs":         "/opt/cni/bin:/usr/lib/cni:/usr/libexec/cni",
 	"cgroup-base":          "/sys/fs/cgroup/juju-fc",
@@ -83,6 +81,8 @@ var configDefaults = schema.Defaults{
 	"metadata-listen-addr": "127.0.0.1:8080",
 	"stop-timeout":         "5s",
 	"shutdown-timeout":     "5s",
+	"vcpu":                 int64(1),
+	"memory-mib":           int64(512),
 }
 
 var configFields = func() schema.Fields {

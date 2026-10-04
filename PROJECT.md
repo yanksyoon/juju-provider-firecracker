@@ -92,7 +92,7 @@ This document outlines the scoped, implementation-ready tasks for building a cus
    - `cgroupBase string` (e.g., `/sys/fs/cgroup/juju-fc`).
 3. Implement `StartVM(id string, socketPath string, configPath string) error`:
    - Create cgroup directory: `mkdir -p /sys/fs/cgroup/juju-fc/<id>`.
-   - Execute `firecracker --api-sock <socketPath> --config-file <configPath>`.
+   - Build a typed SDK VM request and start the SDK machine.
    - Set `cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}`.
    - Write PID to cgroup: `echo <pid> > /sys/fs/cgroup/juju-fc/<id>/cgroup.procs`.
    - Store cmd in processes map.
@@ -133,8 +133,8 @@ This document outlines the scoped, implementation-ready tasks for building a cus
      - Call `networkMgr.SetupNetwork(args.InstanceId)`.
      - Generate user-data payload (Juju agent bootstrap script).
      - Call `metadataSrv.RegisterPayload(args.InstanceId, userData)`.
-     - Generate Firecracker config JSON (kernel, rootfs, network interface).
-     - Call `fcMgr.StartVM(args.InstanceId, socketPath, configPath)`.
+     - Build a typed request containing kernel, rootfs, network interface, and SDK sizing.
+     - Call the SDK-backed manager with that request.
      - Return `&environs.StartInstanceResult{Instance: &FirecrackerInstance{...}}`.
    - `StopInstances(ids ...string) error`:
      - Loop through ids.

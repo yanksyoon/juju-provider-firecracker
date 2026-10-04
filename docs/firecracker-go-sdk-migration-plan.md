@@ -20,10 +20,10 @@ Primary source for the API claims below: the downloaded module at the pinned com
 
 Current production code is `internal/firecracker/manager.go` and `internal/provider/provider.go`:
 
-- `FirecrackerManager.StartVM(id, socketPath, configPath)` creates `<cgroupBase>/<id>`, calls `exec.Command(command, "--api-sock", socketPath, "--config-file", configPath)`, sets `SysProcAttr.Pdeathsig = SIGTERM`, starts the process, writes its PID to `cgroup.procs`, and tracks it.
+- `FirecrackerManager.StartVM(ctx, VMRequest)` maps the typed request to `firecracker.Config`, starts an SDK `Machine`, and tracks it.
 - `StopVM` sends SIGTERM, waits up to the configured five seconds, sends SIGKILL on timeout, removes the cgroup, and is idempotent.
-- The provider currently calls CNI, registers a payload in the separate HTTP metadata server, writes a small JSON file containing kernel, rootfs, interface, and IP fields, then passes config/socket paths to the manager. Cleanup rolls CNI back on failed start and stops the VM before CNI teardown.
-- The provider-facing `VMManager` interface is intentionally small: `StartVM(string,string,string) error`, `StopVM(string) error`, and `ListVMs() []string` (`internal/provider/provider.go:36-41`). Existing fakes and Juju orchestration should remain behind this interface.
+- The provider calls CNI, registers a payload in the separate HTTP metadata server, builds a typed request, and passes it to the manager. Cleanup rolls CNI back on failed start and stops the VM before CNI teardown.
+- The provider-facing `VMManager` interface is intentionally small: `StartVM(context.Context, VMRequest) error`, `StopVM(string) error`, and `ListVMs() []string` (`internal/provider/provider.go:36-41`). Existing fakes and Juju orchestration remain behind this interface.
 - `go.mod` pins Go 1.26.6 and Juju as `github.com/juju/juju v0.0.0-20260930100434-f5b474c76eba`; the current Juju-facing implementation is otherwise independent of the Firecracker process implementation.
 
 The current JSON file is not a Firecracker API config schema. It is a repository-local placeholder. It must not be translated field-for-field into an SDK object without validation: SDK `Config` requires a kernel path, root drive, machine vCPU/memory, socket path, and SDK network model.
@@ -60,7 +60,7 @@ type VMRequest struct {
 }
 ```
 
-The public/provider compatibility adapter can temporarily accept the existing `StartVM(id, socketPath, configPath)` signature, but it must parse/validate the repository config at the boundary and construct a typed `VMRequest`. The preferred follow-up is to change the internal `VMManager` interface to `StartVM(context.Context, VMRequest) error`; update fakes in the same change so no production caller retains config-file semantics.
+The provider uses the typed `StartVM(context.Context, VMRequest) error` interface; no production caller retains config-file semantics.
 
 No production code outside the SDK adapter may call `exec.Command`, construct `--api-sock`, or construct `--config-file`. The SDK itself internally owns process construction through `NewMachine` and its command builder; that is the intended exception and is why the boundary is needed.
 
@@ -71,7 +71,7 @@ No production code outside the SDK adapter may call `exec.Command`, construct `-
 | Socket creation | Provider creates a socket path and CLI receives `--api-sock`. | `firecracker.Config.SocketPath`; `NewMachine(ctx, cfg, opts...)` creates the client and SDK command. `Config` validation rejects an existing socket. | Keep per-VM socket paths, remove CLI flags and JSON socket construction from production manager. Remove stale socket during SDK cleanup and verify absence. |
 | Kernel | Config JSON `kernel_image_path`. | `Config.KernelImagePath`; SDK validation stats the path. | Pass the configured absolute kernel path; fail before process start if missing. |
 | Rootfs | Config JSON `rootfs`. | `Config.Drives []client/models.Drive`; `NewDrivesBuilder(rootPath)` exists in `drives.go`. | Build one root drive with SDK `DrivesBuilder`; preserve read-only policy explicitly. Do not pass rootfs as an unknown JSON field. |
-| Machine sizing | Not currently represented in the config JSON. | `Config.MachineCfg models.MachineConfiguration`, with `VcpuCount` and `MemSizeMib` validated as nonzero. | Add explicit provider config/defaults or reject missing values. Do not invent defaults in the adapter. |
+| Machine sizing | Provider defaults and exposes vCPU and memory. | `Config.MachineCfg models.MachineConfiguration`, with `VcpuCount` and `MemSizeMib` validated as nonzero. | Preserve explicit provider values in the typed request. |
 | Kernel args | Not currently represented. | `Config.KernelArgs string`; SDK adds static-IP boot parameters when its static network configuration is used. | Preserve any existing kernel args and define the source of `ip=`. Reject conflicting duplicate `ip=` values as SDK validation does. |
 | Network interface | CNI returns host interface name and IP; provider writes both to JSON. | `Config.NetworkInterfaces []firecracker.NetworkInterface`, with `StaticNetworkConfiguration{HostDevName, MacAddress, IPConfiguration}`; or SDK `CNIConfiguration` and its `tc-redirect-tap`-style result parser. | First migration should keep the repository CNI manager and use a verified static interface mapping. Do not invoke SDK CNI as a second allocator. A MAC address is required by SDK static validation, so extend the CNI result seam to return/derive one, or stop at this prerequisite. The current CNI contract does not return a MAC. |
 | Metadata/MMDS | Separate HTTP metadata server registers shell payload; current Firecracker JSON does not configure MMDS. | `Config.MmdsAddress`, `Config.MmdsVersion`; `MachineIface.SetMetadata(ctx, interface{}) error`; `Machine.SetMetadata` calls SDK `PutMmds`; `SetMmdsConfig` configures allowed interfaces. | Do not silently replace the HTTP metadata service. Decide whether guest bootstrap will move to MMDS in a separate change. If it does, call `SetMetadata` only after `Start` has initialized the API socket, and explicitly configure allowed interfaces. |

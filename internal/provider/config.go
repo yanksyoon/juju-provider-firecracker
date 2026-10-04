@@ -14,14 +14,13 @@ import (
 // required field was not supplied, which Validate rejects.
 type Config struct {
 	// Paths
-	FirecrackerBinary string
-	KernelImagePath   string
-	RootFSPath        string
-	CNIConfigPath     string
-	CNIBinDirs        []string
-	CgroupBase        string
-	ConfigDir         string
-	SocketDir         string
+	KernelImagePath string
+	RootFSPath      string
+	CNIConfigPath   string
+	CNIBinDirs      []string
+	CgroupBase      string
+	ConfigDir       string
+	SocketDir       string
 
 	// Network
 	MetadataListenAddr string
@@ -32,12 +31,15 @@ type Config struct {
 	// Timeouts
 	StopTimeout     time.Duration
 	ShutdownTimeout time.Duration
+	VCPU            int64
+	MemoryMiB       int64
+	KernelArgs      string
 }
 
 // DefaultConfig returns a Config with backwards-compatible defaults.
 func DefaultConfig() Config {
 	return Config{
-		FirecrackerBinary:  "firecracker",
+
 		CNIConfigPath:      "/etc/cni/net.d/juju-fc.conflist",
 		CNIBinDirs:         []string{"/opt/cni/bin", "/usr/lib/cni", "/usr/libexec/cni"},
 		CgroupBase:         "/sys/fs/cgroup/juju-fc",
@@ -46,6 +48,8 @@ func DefaultConfig() Config {
 		MetadataListenAddr: "127.0.0.1:8080",
 		StopTimeout:        5 * time.Second,
 		ShutdownTimeout:    5 * time.Second,
+		VCPU:               1,
+		MemoryMiB:          512,
 	}
 }
 
@@ -55,7 +59,7 @@ var envOverrides = []struct {
 	key string
 	set func(*Config, string) error
 }{
-	{"JUJU_FC_FIRECRACKER_BINARY", func(c *Config, v string) error { c.FirecrackerBinary = v; return nil }},
+
 	{"JUJU_FC_KERNEL_IMAGE_PATH", func(c *Config, v string) error { c.KernelImagePath = v; return nil }},
 	{"JUJU_FC_ROOTFS_PATH", func(c *Config, v string) error { c.RootFSPath = v; return nil }},
 	{"JUJU_FC_CNI_CONFIG_PATH", func(c *Config, v string) error { c.CNIConfigPath = v; return nil }},
@@ -97,9 +101,7 @@ func NewConfig(attrs map[string]interface{}) (Config, error) {
 	}
 
 	// Apply model config overrides on top (highest priority).
-	if v, ok := attrs["firecracker-binary"].(string); ok && v != "" {
-		cfg.FirecrackerBinary = v
-	}
+
 	if v, ok := attrs["kernel-image-path"].(string); ok && v != "" {
 		cfg.KernelImagePath = v
 	}
@@ -141,6 +143,15 @@ func NewConfig(attrs map[string]interface{}) (Config, error) {
 		}
 		cfg.ShutdownTimeout = d
 	}
+	if v, ok := attrs["vcpu"].(int64); ok && v > 0 {
+		cfg.VCPU = v
+	}
+	if v, ok := attrs["memory-mib"].(int64); ok && v > 0 {
+		cfg.MemoryMiB = v
+	}
+	if v, ok := attrs["kernel-args"].(string); ok {
+		cfg.KernelArgs = v
+	}
 
 	return cfg, nil
 }
@@ -176,13 +187,6 @@ func (c Config) Validate() error {
 		}
 	}
 
-	// Firecracker binary can be a bare name on PATH; only validate absolute.
-	if filepath.IsAbs(c.FirecrackerBinary) {
-		if err := validateSafePath("firecracker-binary", c.FirecrackerBinary, false); err != nil {
-			return err
-		}
-	}
-
 	// Kernel and rootfs must be absolute and safe.
 	for _, f := range []struct {
 		name  string
@@ -209,6 +213,9 @@ func (c Config) Validate() error {
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("shutdown-timeout must be positive, got %s", c.ShutdownTimeout)
+	}
+	if c.VCPU < 1 || c.MemoryMiB < 1 {
+		return fmt.Errorf("vcpu and memory-mib must be positive")
 	}
 	if c.CrossControllerSettings != "" {
 		if _, err := ParseCrossControllerConfig([]byte(c.CrossControllerSettings)); err != nil {
