@@ -41,6 +41,9 @@ jobs:
       - name: Check whitespace
         run: git diff --check
 
+      - name: Check release workflow and installer
+        run: sh scripts/release-check.sh
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

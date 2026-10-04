@@ -4,7 +4,7 @@ This document is the source of truth for runtime design and protocols. Repositor
 
 ## Scope and status
 
-The provider adapts the Juju instance-broker lifecycle while managing Firecracker microVMs directly. The design is specified in `PROJECT.md` Tasks 1–5. The current checkout provides the provider orchestration and package tests as a library; it does not provide a standalone provider executable or a live-controller deployment command.
+The provider adapts the Juju instance-broker lifecycle while managing Firecracker microVMs directly. The design is specified in `PROJECT.md` Tasks 1–5. The checkout provides a standalone provider registration executable at `cmd/juju-firecracker`; supported release binaries and their verified installer are documented in [release.md](release.md). A live-controller deployment still requires the host prerequisites and acceptance flow described in [acceptance-audit.md](acceptance-audit.md).
 
 The toolchain is the Go version declared in `go.mod` (currently Go 1.26.6). The Juju 3.x API dependency is pinned in `go.mod`. No unpinned dependency or local-home path is part of this design.
 

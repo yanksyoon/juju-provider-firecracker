@@ -4,10 +4,35 @@ This repository contains a Go implementation scaffold for a Juju provider backed
 
 ## Installation and Usage
 
-This is a Linux-only provider scaffold. The repository is the source of truth for
+This is a Linux-only provider. The repository is the source of truth for
 configuration; the detailed design and host contract are in
 [docs/architecture.md](docs/architecture.md) and the runtime configuration table
 below.
+
+### Install a release (recommended)
+
+Release binaries are published for Linux `amd64` and `arm64`. The installer
+downloads only over HTTPS and verifies the SHA256 manifest before replacing the
+provider registration binary. It does not require Go, Firecracker, or a clone:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yanksyoon/juju-provider-firecracker/main/scripts/install.sh | sh
+```
+
+For reproducible installation, pin a tag and choose a user-writable directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yanksyoon/juju-provider-firecracker/main/scripts/install.sh \
+  | JUJU_FIRECRACKER_VERSION=v1.2.3 INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+Without a version, the installer follows the GitHub Releases `latest` redirect.
+Use `JUJU_FIRECRACKER_VERSION` or a positional version to avoid moving targets.
+The default destination is `/usr/local/bin`; when it is not writable the
+installer uses `$HOME/.local/bin`, or an explicit `INSTALL_DIR`. Existing files
+are left untouched until download and checksum verification succeed. To roll
+back, rerun the installer with the previous tag; to uninstall, remove the
+installed `juju-firecracker` path (the installer prints it).
 
 ### Prerequisites
 
@@ -23,22 +48,22 @@ The Firecracker, KVM, CNI, cgroup, kernel, and rootfs prerequisites are normally
 unavailable on ordinary workstations and hosted CI. They are not needed for
 editing the repository or running its safe tests.
 
-### Build and safe verification
+### Source build and safe verification (development fallback)
 
 From the repository root:
 
 ```bash
 go build -o juju-firecracker ./cmd/juju-firecracker
-sudo install -m 0755 juju-firecracker /usr/local/bin/juju-firecracker  # optional; needs privilege
 go test ./...
 go vet ./...
 test -z "$(gofmt -l .)"
 git diff --check
 ```
 
-The binary registers the `firecracker` provider when Juju invokes it and must
-remain available on the host where Juju discovers providers. No credentials,
-cloud endpoint, or kubeconfig is required by this local provider.
+Source builds are for development and testing; normal users should install a
+versioned release instead. The binary registers the `firecracker` provider when
+Juju invokes it and must remain available on the host where Juju discovers
+providers. No credentials, cloud endpoint, or kubeconfig is required.
 
 ### Disposable real integration test
 
@@ -138,7 +163,7 @@ Build the provider registration binary:
 ```bash
 go build -o juju-firecracker ./cmd/juju-firecracker
 # Registration happens via init(); the binary blocks for Juju to call it.
-# Install: cp juju-firecracker /usr/local/bin/
+# Development-only install: cp juju-firecracker "$HOME/.local/bin/"
 ```
 
 ## Disposable Firecracker integration
@@ -244,6 +269,7 @@ Tasks 1–5 in `PROJECT.md` describe the provider and integration work. Task 6 s
 ## Where to change things
 
 - Setup and repository status: this file.
+- Release binaries, checksum verification, and installer: [docs/release.md](docs/release.md).
 - Runtime design and protocols: [docs/architecture.md](docs/architecture.md).
 - Disposable Juju performance campaign and measurement matrix: [docs/performance-profiling-campaign.md](docs/performance-profiling-campaign.md).
 - Disposable Canonical K8s cross-controller settings and gated smoke procedure: [docs/cross-controller-compatibility.md](docs/cross-controller-compatibility.md).

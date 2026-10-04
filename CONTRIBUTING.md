@@ -1,6 +1,6 @@
 # Contributing
 
-This repository contains the specification and Go implementation scaffold. Read [README.md](README.md) for implementation status and [docs/architecture.md](docs/architecture.md) for runtime design. `PROJECT.md` is the scope and acceptance-criteria document.
+This repository contains the specification and Go implementation. Read [README.md](README.md) for implementation status and [docs/architecture.md](docs/architecture.md) for runtime design. Release and installation behavior is documented in [docs/release.md](docs/release.md). `PROJECT.md` is the scope and acceptance-criteria document.
 
 ## Local prerequisites
 
@@ -24,6 +24,13 @@ test -z "$(gofmt -l .)"
 ```
 
 The workflow uses the same safe commands. Keep this document and `.github/workflows/ci.yml` synchronized when commands or gates change.
+
+Release changes must also preserve the checks in `.github/workflows/release.yml`:
+only semantic-version tags or an explicit dispatch may publish, and the release
+must contain both Linux architectures, `version.txt`, and `checksums.txt`. Do
+not test an installer by writing to `/usr/local/bin`; use a temporary
+`INSTALL_DIR` and a local fixture or static validation instead. Never commit
+generated binaries or release credentials.
 
 The end-to-end suite is not a normal unit-test command. It requires Linux, KVM, cgroup v2, Firecracker, a working CNI installation, and disposable network, kernel, rootfs, and cgroup configuration. Run it only on a deliberately configured host with `JUJU_FC_RUN_E2E=1`; the test refuses system CNI paths and configured production Juju targets. The safe Go checks must pass before privileged testing is attempted.
 

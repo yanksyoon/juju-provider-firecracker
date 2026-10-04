@@ -14,6 +14,9 @@ import (
 	_ "github.com/canonical/juju-provider-firecracker/internal/provider"
 )
 
+// version is set by the release workflow.
+var version = "dev"
+
 func main() {
 	// Registration happens via provider.init(). This process must stay
 	// alive so Juju can reach it.

@@ -1,0 +1,125 @@
+name: Release provider binaries
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing semantic version tag to release (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        name: Resolve and validate version
+        env:
+          PUSH_VERSION: ${{ github.ref_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == push ]]; then
+            version="$PUSH_VERSION"
+          else
+            version="$DISPATCH_VERSION"
+          fi
+          [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            printf 'Invalid release version: %s\n' "$version" >&2
+            exit 1
+          }
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+          fetch-depth: 1
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build release binary
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="juju-firecracker_${VERSION}_linux_${ARCH}"
+          CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION}" -o "$name" ./cmd/juju-firecracker
+          chmod 0755 "$name"
+          printf '%s\n' "$VERSION" > "version-${ARCH}.txt"
+          sha256sum "$name" "version-${ARCH}.txt" > "checksums-${ARCH}.txt"
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            juju-firecracker_*
+            version-*.txt
+            checksums-*.txt
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: release-*
+          merge-multiple: true
+      - name: Assemble immutable release assets
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VERSION"
+          test "$(find . -maxdepth 1 -type f -name 'juju-firecracker_*_linux_*' | wc -l)" -eq 2
+          cat checksums-*.txt > checksums.txt
+          sort -k2,2 -o checksums.txt checksums.txt
+          printf '%s\n' "$VERSION" > version.txt
+          rm -f checksums-*.txt version-*.txt
+      - name: Publish release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: juju-firecracker ${{ needs.validate.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            juju-firecracker_*_linux_*
+            checksums.txt
+            version.txt
