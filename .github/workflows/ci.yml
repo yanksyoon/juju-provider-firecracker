@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_privileged_integration:
+        description: Run Firecracker/KVM tests on an isolated self-hosted runner
+        required: true
+        default: false
+        type: boolean
+      cni_config:
+        description: Absolute path to a disposable CNI conflist on the runner
+        required: false
+        type: string
+      cgroup_base:
+        description: Absolute path to a disposable writable cgroup subtree
+        required: false
+        type: string
+      kernel:
+        description: Absolute path to a disposable guest kernel
+        required: false
+        type: string
+      rootfs:
+        description: Absolute path to a disposable guest rootfs
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  repository-checks:
+    name: Safe repository checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Run unit and safe integration tests
+        run: go test ./...
+
+      - name: Run race tests
+        run: go test -race ./...
+
+  privileged-integration:
+    name: Privileged Firecracker integration (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_privileged_integration == true
+    runs-on: [self-hosted, linux, firecracker-integration]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify privileged host prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm || { echo 'Missing /dev/kvm' >&2; exit 1; }
+          test -d /sys/fs/cgroup || { echo 'Missing cgroup filesystem' >&2; exit 1; }
+          command -v firecracker || { echo 'firecracker is not on PATH' >&2; exit 1; }
+          test -n '${{ inputs.cni_config }}' || { echo 'cni_config input is required' >&2; exit 1; }
+          test -n '${{ inputs.cgroup_base }}' || { echo 'cgroup_base input is required' >&2; exit 1; }
+          test -n '${{ inputs.kernel }}' || { echo 'kernel input is required' >&2; exit 1; }
+          test -n '${{ inputs.rootfs }}' || { echo 'rootfs input is required' >&2; exit 1; }
+          test -f '${{ inputs.cni_config }}'
+          test -d '${{ inputs.cgroup_base }}'
+          test -f '${{ inputs.kernel }}'
+          test -f '${{ inputs.rootfs }}'
+
+      - name: Install CNI plugins in runner temp
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='v1.5.1'
+          archive="cni-plugins-linux-amd64-${version}.tgz"
+          curl --fail --location --retry 3 \
+            "https://github.com/containernetworking/plugins/releases/download/${version}/${archive}" \
+            --output "${RUNNER_TEMP}/${archive}"
+          mkdir -p "${RUNNER_TEMP}/cni/bin"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/cni/bin"
+
+      - name: Run explicitly gated end-to-end test
+        env:
+          CNI_PATH: ${{ runner.temp }}/cni/bin
+          JUJU_FC_RUN_E2E: '1'
+          JUJU_FC_E2E_CNI_CONFIG: ${{ inputs.cni_config }}
+          JUJU_FC_CGROUP_BASE: ${{ inputs.cgroup_base }}
+          JUJU_FC_E2E_KERNEL: ${{ inputs.kernel }}
+          JUJU_FC_E2E_ROOTFS: ${{ inputs.rootfs }}
+        run: go test -count=1 -timeout=60s -v ./test/integration -run '^TestEndToEnd$'

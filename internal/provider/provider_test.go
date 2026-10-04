@@ -1,0 +1,125 @@
+package provider
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/juju/juju/cloudconfig/instancecfg"
+	"github.com/juju/juju/core/instance"
+	"github.com/juju/juju/environs"
+)
+
+type fakeNetwork struct {
+	setup, teardown []string
+	ip, tap         string
+	setupErr        error
+}
+
+func (f *fakeNetwork) SetupNetwork(id string) (string, string, error) {
+	f.setup = append(f.setup, id)
+	return f.ip, f.tap, f.setupErr
+}
+func (f *fakeNetwork) TeardownNetwork(id string) error {
+	f.teardown = append(f.teardown, id)
+	return nil
+}
+
+type fakeMetadata struct {
+	id   string
+	data []byte
+}
+
+func (f *fakeMetadata) RegisterPayload(id string, data []byte) {
+	f.id, f.data = id, append([]byte(nil), data...)
+}
+
+type fakeVM struct {
+	started, stopped []string
+	ids              []string
+	startErr         error
+	stopErr          error
+}
+
+func (f *fakeVM) StartVM(id, _, _ string) error { f.started = append(f.started, id); return f.startErr }
+func (f *fakeVM) StopVM(id string) error        { f.stopped = append(f.stopped, id); return f.stopErr }
+func (f *fakeVM) ListVMs() []string             { return append([]string(nil), f.ids...) }
+
+func TestLifecycleOrchestratesDependenciesAndRollsBack(t *testing.T) {
+	net := &fakeNetwork{ip: "192.168.100.5", tap: "tap0"}
+	meta := &fakeMetadata{}
+	vm := &fakeVM{}
+	p, err := New(Options{Network: net, Metadata: meta, VM: vm, ConfigDir: t.TempDir(), SocketDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := environs.StartInstanceParams{InstanceConfig: &instancecfg.InstanceConfig{MachineId: "machine-1"}}
+	result, err := p.StartInstance(nil, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Instance.Id(); string(got) != "machine-1" {
+		t.Fatalf("instance ID = %q", got)
+	}
+	if len(net.setup) != 1 || net.setup[0] != "machine-1" || meta.id != "machine-1" || len(meta.data) == 0 || len(vm.started) != 1 {
+		t.Fatalf("unexpected calls: setup=%v metadata=%q start=%v", net.setup, meta.id, vm.started)
+	}
+	if err := p.StopInstances(nil, "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(vm.stopped) != 1 || len(net.teardown) != 1 {
+		t.Fatalf("cleanup calls: stop=%v teardown=%v", vm.stopped, net.teardown)
+	}
+}
+
+func TestStartRollsBackNetworkWhenVMFails(t *testing.T) {
+	net := &fakeNetwork{ip: "192.168.100.6", tap: "tap1"}
+	vm := &fakeVM{startErr: errors.New("boom")}
+	p, err := New(Options{Network: net, Metadata: &fakeMetadata{}, VM: vm, ConfigDir: t.TempDir(), SocketDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.StartInstance(nil, environs.StartInstanceParams{InstanceConfig: &instancecfg.InstanceConfig{MachineId: "machine-2"}})
+	if err == nil || len(net.teardown) != 1 || net.teardown[0] != "machine-2" {
+		t.Fatalf("err=%v teardown=%v", err, net.teardown)
+	}
+}
+
+func TestInstancesListingAndUnknownStop(t *testing.T) {
+	net := &fakeNetwork{ip: "192.168.100.7", tap: "tap2"}
+	vm := &fakeVM{ids: []string{"machine-3"}, stopErr: errors.New("unexpected stop")}
+	p, err := New(Options{Network: net, Metadata: &fakeMetadata{}, VM: vm, ConfigDir: t.TempDir(), SocketDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.StartInstance(nil, environs.StartInstanceParams{InstanceConfig: &instancecfg.InstanceConfig{MachineId: "machine-3"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := p.AllInstances(nil)
+	if err != nil || len(all) != 1 || all[0].Id() != "machine-3" {
+		t.Fatalf("all instances = %v, err = %v", all, err)
+	}
+	running, err := p.AllRunningInstances(nil)
+	if err != nil || len(running) != 1 || running[0].Id() != "machine-3" {
+		t.Fatalf("running instances = %v, err = %v", running, err)
+	}
+	selected, err := p.Instances(nil, []instance.Id{"missing", "machine-3"})
+	if err != nil || len(selected) != 1 || selected[0].Id() != "machine-3" {
+		t.Fatalf("selected instances = %v, err = %v", selected, err)
+	}
+	// Unknown IDs must be ignored without reaching the VM or CNI boundary.
+	if err := p.StopInstances(nil, "missing"); err != nil || len(vm.stopped) != 0 || len(net.teardown) != 0 {
+		t.Fatalf("unknown stop: err=%v stopped=%v teardown=%v", err, vm.stopped, net.teardown)
+	}
+	// A failed cleanup remains tracked so a subsequent stop can retry it.
+	if err := p.StopInstances(nil, "machine-3"); err == nil {
+		t.Fatal("expected stop error")
+	}
+	vm.stopErr = nil
+	if err := p.StopInstances(nil, "machine-3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.StopInstances(nil, "machine-3"); err != nil || len(vm.stopped) != 2 || len(net.teardown) != 2 {
+		t.Fatalf("repeated stop: err=%v stopped=%v teardown=%v", err, vm.stopped, net.teardown)
+	}
+}
