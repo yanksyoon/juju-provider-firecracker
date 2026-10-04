@@ -11,7 +11,8 @@ Reproduce from the repository root:
 asciinema rec --overwrite --title 'juju-provider-firecracker safe E2E validation' --command './artifacts/e2e-demo.sh' artifacts/e2e-demo.cast
 ```
 
-The recorded run executed the following stages:
+The recorded run starts by printing the repository README acceptance flow, then
+executes the safe commands documented there. It executed the following stages:
 
 1. Host capability discovery (Linux, KVM, Firecracker, CNI plugins, cgroup base, guest kernel, and rootfs).
 2. `gofmt` cleanliness, `go vet ./...`, `go test ./...`, and `go test -race ./...`.
@@ -24,7 +25,7 @@ The live privileged lifecycle was not attempted. The host lacks the Firecracker 
 Verification performed after recording:
 
 - `asciinema 2.4.0` was used and the cast begins with an Asciicast v2 metadata header.
-- The cast contains the executed safe tests, explicit `TestEndToEnd` skip, and cleanup output (`none` for Firecracker processes, cgroup, and matching TAP devices).
+- The cast begins by showcasing `README.md`, then contains the executed safe tests, explicit `TestEndToEnd` skip, and cleanup output (`none` for Firecracker processes, cgroup, and matching TAP devices).
 - `go test -count=1 -timeout=60s -v ./test/integration -run 'TestPrerequisiteChecks|TestEndToEndCleanup'` passed.
 - `go test -count=1 -timeout=30s -v ./test/integration -run '^TestEndToEnd$'` exited successfully with the expected prerequisite skip.
 - A separate host check found no Firecracker process, `juju-fc` cgroup, or matching TAP interface.

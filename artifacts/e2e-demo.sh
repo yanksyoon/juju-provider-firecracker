@@ -8,6 +8,8 @@ export PS1='demo$ '
 printf '%s\n' 'juju-provider-firecracker disposable E2E demonstration'
 printf '%s\n' 'mode: safe validation + explicit privileged prerequisite gate'
 printf '%s\n' 'secrets: none loaded; production Juju variables intentionally unset'
+printf '%s\n' '--- README.md (acceptance flow shown first) ---'
+sed -n '1,140p' README.md
 printf '%s\n' '--- prerequisite checks ---'
 printf 'kernel: '; uname -s
 printf 'kvm: '; if [[ -e /dev/kvm ]]; then printf '%s\n' present; else printf '%s\n' absent; fi

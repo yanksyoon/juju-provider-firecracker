@@ -1,0 +1,12 @@
+artifact: artifacts/e2e-demo.cast
+absolute_path: /home/ubuntu/canonical/juju-provider-firecracker/artifacts/e2e-demo.cast
+format: asciicast-v2
+recorded_with: asciinema 2.4.0
+recording_mode: safe prerequisite and unit/integration-gate validation
+sha256: e4f6d9ac5b5e5e2f263833f6bf9a70dabc7557109bcf78e8b6c9a3daf026ff2e
+record_command: asciinema rec --overwrite --title 'juju-provider-firecracker safe E2E validation' --command './artifacts/e2e-demo.sh' artifacts/e2e-demo.cast
+README_shown_first: yes; the recording prints README.md before prerequisite checks and safe commands
+privileged_juju_run: not executed
+blockers: Firecracker binary; disposable CNI config/plugins; writable juju-fc cgroup; guest kernel; guest rootfs; provider registration and complete Juju Environ
+cleanup_evidence: no matching Firecracker process, juju-fc cgroup, or TAP interface
+credentials: none
