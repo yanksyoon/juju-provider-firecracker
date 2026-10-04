@@ -78,6 +78,8 @@ jobs:
           sha256sum "$name" > "checksums-${ARCH}.txt"
       - name: Build custom Juju bundle
         env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          ARCH: ${{ matrix.arch }}
           GOARCH: ${{ matrix.arch }}
           GOOS: linux
           CGO_ENABLED: 1
