@@ -162,12 +162,12 @@ cgroup subtree.
 
 ```bash
 export DISPOSABLE_CONTROLLER=fc-test-controller
-juju bootstrap firecracker "$DISPOSABLE_CONTROLLER"
+juju bootstrap firecracker "$DISPOSABLE_CONTROLLER" \
+  --config kernel-image-path="$KERNEL_IMAGE" \
+  --config rootfs-path="$ROOTFS_IMAGE" \
+  --config cni-config-path="$JUJU_FC_CNI_CONFIG_PATH" \
+  --config cgroup-base="$JUJU_FC_CGROUP_BASE"
 juju add-model fc-demo
-juju model-config kernel-image-path="$KERNEL_IMAGE"
-juju model-config rootfs-path="$ROOTFS_IMAGE"
-juju model-config cni-config-path="$JUJU_FC_CNI_CONFIG_PATH"
-juju model-config cgroup-base="$JUJU_FC_CGROUP_BASE"
 ```
 
 5. Deploy a small test charm. This uses the Ubuntu charm and installs BusyBox
