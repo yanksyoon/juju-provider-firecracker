@@ -8,6 +8,8 @@ REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 JUJU_VERSION=${JUJU_FIRECRACKER_JUJU_VERSION:-v0.0.0-20260930100434-f5b474c76eba}
 JUJU_HASH=f5b474c76eba
 OUTPUT=${1:-"$REPO_ROOT/dist/juju-firecracker-bundle"}
+TARGET_GOOS=${GOOS:-$(go env GOOS)}
+TARGET_GOARCH=${GOARCH:-$(go env GOARCH)}
 
 case "$OUTPUT" in
   /|/tmp|/home|/home/ubuntu) printf '%s\n' "refusing unsafe output directory: $OUTPUT" >&2; exit 2 ;;
@@ -62,9 +64,13 @@ gofmt -w "$VENDOR_ROOT" "$SOURCE/internal/provider/all/firecracker.go" "$SOURCE/
 (cd "$SOURCE" && go mod tidy)
 
 mkdir -p "$OUTPUT/bin"
-(cd "$SOURCE" && go test ./internal/provider/all)
-(cd "$SOURCE" && go build -o "$OUTPUT/bin/juju" ./cmd/juju)
-(cd "$SOURCE" && go build -o "$OUTPUT/bin/jujud" ./cmd/jujud)
+if [ "$TARGET_GOOS" = "$(go env GOOS)" ] && [ "$TARGET_GOARCH" = "$(go env GOARCH)" ] && [ "${BUILD_ONLY:-0}" != 1 ]; then
+  (cd "$SOURCE" && go test ./internal/provider/all)
+else
+  printf '%s\n' "skipping target-only tests for $TARGET_GOOS/$TARGET_GOARCH"
+fi
+(cd "$SOURCE" && GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" go build -trimpath -o "$OUTPUT/bin/juju" ./cmd/juju)
+(cd "$SOURCE" && GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" go build -trimpath -o "$OUTPUT/bin/jujud" ./cmd/jujud)
 
 cat >"$OUTPUT/BUILD-INFO" <<EOF
 juju_module=github.com/juju/juju
@@ -73,5 +79,7 @@ juju_commit=$JUJU_HASH
 provider=firecracker
 registration=github.com/juju/juju/internal/provider/all
 binaries=bin/juju,bin/jujud
+goos=$TARGET_GOOS
+goarch=$TARGET_GOARCH
 EOF
 printf '%s\n' "built $OUTPUT/bin/juju and $OUTPUT/bin/jujud"

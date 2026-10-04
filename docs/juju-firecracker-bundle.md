@@ -4,8 +4,9 @@ Stock Juju does not discover `juju-firecracker` as an external provider. A
 custom bundle is required: `scripts/build-juju-firecracker.sh` fetches and
 verifies Juju commit `f5b474c76ebac3934e2df1e173f85922c48258f5`, vendors the
 provider into Juju's existing `internal/provider/all` registration package,
-and builds matching `juju` and `jujud` binaries. The bundle is local-only;
-this repository does not publish these binaries.
+and builds matching `juju` and `jujud` binaries. Release `v0.0.2` publishes
+architecture-specific bundle archives containing those binaries; verify the
+release checksum manifest before extraction.
 
 Build in a disposable directory:
 

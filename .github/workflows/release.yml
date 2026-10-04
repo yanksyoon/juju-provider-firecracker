@@ -76,12 +76,30 @@ jobs:
             -ldflags "-s -w -X main.version=${VERSION}" -o "$name" ./cmd/juju-firecracker
           chmod 0755 "$name"
           sha256sum "$name" > "checksums-${ARCH}.txt"
+      - name: Build custom Juju bundle
+        env:
+          GOARCH: ${{ matrix.arch }}
+          GOOS: linux
+          CGO_ENABLED: 1
+          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.arch }}" == arm64 ]]; then
+            sudo apt-get update
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+          bundle_dir="bundle-${VERSION}-${ARCH}"
+          BUILD_ONLY=1 scripts/build-juju-firecracker.sh "$bundle_dir"
+          tar -C "$bundle_dir" -czf "juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz" bin BUILD-INFO
+          sha256sum "juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz" >> "checksums-${ARCH}.txt"
       - name: Upload build artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         with:
           name: release-${{ matrix.arch }}
           path: |
             juju-firecracker_*
+            juju-firecracker-bundle_*
             checksums-*.txt
           if-no-files-found: error
           retention-days: 5
@@ -105,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$VERSION"
-          test "$(find . -maxdepth 1 -type f -name 'juju-firecracker_*_linux_*' | wc -l)" -eq 2
+          test "$(find . -maxdepth 1 -type f -name 'juju-firecracker_v*_linux_*' | wc -l)" -eq 4
           cat checksums-*.txt > checksums.txt
           sort -k2,2 -o checksums.txt checksums.txt
           rm -f checksums-*.txt
@@ -118,4 +136,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             juju-firecracker_*_linux_*
+            juju-firecracker-bundle_*_linux_*
             checksums.txt

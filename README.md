@@ -61,9 +61,10 @@ git diff --check
 ```
 
 Source builds are for development and testing; normal users should install a
-versioned release instead. The binary registers the `firecracker` provider when
-Juju invokes it and must remain available on the host where Juju discovers
-providers. No credentials, cloud endpoint, or kubeconfig is required.
+versioned release instead. The standalone `juju-firecracker` binary does not
+extend stock Juju's in-process provider registry. Use the matching custom
+`juju`/`jujud` bundle for bootstrap; no credentials, cloud endpoint, or
+kubeconfig is required.
 
 ### Disposable real integration test
 
@@ -90,19 +91,41 @@ runner; see [CONTRIBUTING.md](CONTRIBUTING.md).
 ### Install, bootstrap Juju, and run a workload smoke test
 
 This is the canonical operator walkthrough. Run it only on a disposable Linux
-host or LXD VM. It requires Juju, KVM, cgroup v2, Firecracker, CNI plugins, a
-disposable guest kernel/rootfs, and a disposable CNI configuration. The release
-installer installs the provider registration binary; it does not install or
-configure Firecracker, Juju, CNI, the kernel, or the rootfs.
+host or LXD VM. It requires KVM, cgroup v2, Firecracker, CNI plugins, a
+disposable guest kernel/rootfs, and a disposable CNI configuration. Release
+`v0.0.2` publishes both the provider binary and the matching custom Juju
+`juju`/`jujud` bundle; stock Juju cannot discover this provider.
 
-1. Install a pinned provider release. Set `INSTALL_DIR` if `/usr/local/bin` is
-   not writable:
+1. Install the pinned provider release and matching Juju bundle:
 
 ```bash
+set -eu
+export FC_VERSION=v0.0.2
+export FC_INSTALL_DIR="$HOME/.local/bin"
+mkdir -p "$FC_INSTALL_DIR"
 curl -fsSL https://raw.githubusercontent.com/yanksyoon/juju-provider-firecracker/main/scripts/install.sh \
-  | JUJU_FIRECRACKER_VERSION=v0.0.1 INSTALL_DIR="$HOME/.local/bin" sh
-export PATH="$HOME/.local/bin:$PATH"
-test -x "$(command -v juju-firecracker)"
+  | JUJU_FIRECRACKER_VERSION="$FC_VERSION" INSTALL_DIR="$FC_INSTALL_DIR" sh
+
+case "$(uname -m)" in
+  x86_64) FC_ARCH=amd64 ;;
+  aarch64|arm64) FC_ARCH=arm64 ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 2 ;;
+esac
+FC_TMP=$(mktemp -d)
+trap 'rm -rf "$FC_TMP"' EXIT
+curl -fsSLo "$FC_TMP/checksums.txt" \
+  "https://github.com/yanksyoon/juju-provider-firecracker/releases/download/${FC_VERSION}/checksums.txt"
+curl -fsSLo "$FC_TMP/bundle.tar.gz" \
+  "https://github.com/yanksyoon/juju-provider-firecracker/releases/download/${FC_VERSION}/juju-firecracker-bundle_${FC_VERSION}_linux_${FC_ARCH}.tar.gz"
+( cd "$FC_TMP" && grep "juju-firecracker-bundle_${FC_VERSION}_linux_${FC_ARCH}.tar.gz$" checksums.txt \
+  | sha256sum -c - )
+tar -xzf "$FC_TMP/bundle.tar.gz" -C "$FC_INSTALL_DIR"
+export PATH="$FC_INSTALL_DIR:$PATH"
+test -x "$FC_INSTALL_DIR/juju-firecracker"
+test -x "$FC_INSTALL_DIR/bin/juju"
+test -x "$FC_INSTALL_DIR/bin/jujud"
+export PATH="$FC_INSTALL_DIR/bin:$PATH"
+juju version
 ```
 
 2. Prepare the disposable host. Set these to real paths on the host; do not use
@@ -121,19 +144,10 @@ non-overlapping address space, host firewall/isolation policy, and cleanup
 ownership. The provider must be able to access `/dev/kvm` and the configured
 cgroup subtree.
 
-3. Bootstrap a disposable controller and model with the matching custom Juju
-   distribution. The provider must be compiled into both `juju` and `jujud`
-   from a Juju fork that blank-imports this repository's public `provider`
-   package. Installing `juju-firecracker` alone is insufficient: stock Juju
-   returns `unknown cloud "firecracker"`, and a stock controller cannot load
-   the provider from the client host. The reproducible integration contract is
-   documented in `docs/juju-provider-registration-boundary-plan.md`; no custom
-   Juju release is published by this repository yet.
+3. Bootstrap a disposable controller and model:
 
 ```bash
 export DISPOSABLE_CONTROLLER=fc-test-controller
-# Put the matching fork's bin directory first; it must contain both juju and jujud.
-export PATH=/path/to/juju-firecracker-build/dist:$PATH
 juju bootstrap firecracker "$DISPOSABLE_CONTROLLER" --no-gui
 juju add-model fc-demo
 juju model-config kernel-image-path="$KERNEL_IMAGE"
@@ -142,10 +156,8 @@ juju model-config cni-config-path="$JUJU_FC_CNI_CONFIG_PATH"
 juju model-config cgroup-base="$JUJU_FC_CGROUP_BASE"
 ```
 
-4. Deploy a small test workload. Juju's `ubuntu` charm is used with the
-application name `busybox-smoke`; BusyBox is installed inside the disposable
-unit and then executed to verify instance creation, networking, SSH, and guest
-command execution:
+4. Deploy a small test charm. This uses the Ubuntu charm and installs BusyBox
+   inside the disposable unit:
 
 ```bash
 juju deploy ubuntu busybox-smoke --channel=stable
@@ -159,7 +171,7 @@ A passing smoke test must show the unit as `active` and print
 production isolation, performance, or controller HA.
 
 5. Destroy every disposable resource after the test, even when the workload
-fails:
+   fails:
 
 ```bash
 juju destroy-application busybox-smoke --force
@@ -167,11 +179,9 @@ juju destroy-model fc-demo --destroy-storage --force --no-wait
 juju destroy-controller "$DISPOSABLE_CONTROLLER" --destroy-all-models --force
 ```
 
-This walkthrough is an acceptance contract, not a claim that the repository's
-checkout has completed a live controller deployment. Record the exact first
-failed prerequisite or command instead of substituting mocks. See
-[docs/acceptance-audit.md](docs/acceptance-audit.md) for the current evidence and
-known implementation boundary.
+This walkthrough is an acceptance contract. Record the exact first failed
+prerequisite or command instead of substituting mocks. See
+[docs/acceptance-audit.md](docs/acceptance-audit.md) for current evidence.
 
 ## Architecture
 
