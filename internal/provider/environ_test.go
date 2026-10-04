@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/juju/juju/cloud"
 	"github.com/juju/juju/core/constraints"
 	"github.com/juju/juju/environs"
 	"github.com/juju/juju/environs/config"
@@ -149,16 +150,19 @@ func TestEnvironProviderOpen(t *testing.T) {
 		t.Fatal("expected no credential schemas")
 	}
 
-	_, err := ep.DetectCredentials("")
-	if err == nil {
-		t.Fatal("DetectCredentials should return not-found")
-	}
-
-	cred, err := ep.FinalizeCredential(nil, environs.FinalizeCredentialParams{})
+	cred, err := ep.DetectCredentials("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cred == nil {
+	if cred == nil || cred.AuthCredentials["default"].AuthType() != cloud.EmptyAuthType {
+		t.Fatalf("expected default empty credential, got %#v", cred)
+	}
+
+	finalized, err := ep.FinalizeCredential(nil, environs.FinalizeCredentialParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalized == nil {
 		t.Fatal("expected a credential")
 	}
 }

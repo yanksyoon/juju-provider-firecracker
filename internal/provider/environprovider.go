@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/juju/jsonschema"
 	"github.com/juju/juju/cloud"
 	"github.com/juju/juju/environs"
@@ -49,8 +48,10 @@ func (ep *environProvider) DetectRegions() ([]cloud.Region, error) {
 }
 
 // DetectCredentials returns an empty credential — Firecracker has no remote auth.
+// Returning the credential is important because Juju still asks for a
+// credential during bootstrap even when the provider declares no schemas.
 func (ep *environProvider) DetectCredentials(_ string) (*cloud.CloudCredential, error) {
-	return nil, errors.NotFoundf("credentials for firecracker")
+	return cloud.NewEmptyCloudCredential(), nil
 }
 
 // FinalizeCredential is a no-op for Firecracker.

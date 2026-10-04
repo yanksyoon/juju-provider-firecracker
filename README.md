@@ -128,7 +128,21 @@ export PATH="$FC_INSTALL_DIR/bin:$PATH"
 juju version
 ```
 
-2. Prepare the disposable host. Set these to real paths on the host; do not use
+2. Register the local Firecracker cloud with the custom Juju client:
+
+```bash
+cat > "$FC_TMP/firecracker-cloud.yaml" <<'EOF'
+clouds:
+  firecracker:
+    type: firecracker
+    regions:
+      local:
+        endpoint: local
+EOF
+juju add-cloud --client firecracker "$FC_TMP/firecracker-cloud.yaml"
+```
+
+3. Prepare the disposable host. Set these to real paths on the host; do not use
    production CNI state or guest images:
 
 ```bash
@@ -144,11 +158,11 @@ non-overlapping address space, host firewall/isolation policy, and cleanup
 ownership. The provider must be able to access `/dev/kvm` and the configured
 cgroup subtree.
 
-3. Bootstrap a disposable controller and model:
+4. Bootstrap a disposable controller and model:
 
 ```bash
 export DISPOSABLE_CONTROLLER=fc-test-controller
-juju bootstrap firecracker "$DISPOSABLE_CONTROLLER" --no-gui
+juju bootstrap firecracker "$DISPOSABLE_CONTROLLER"
 juju add-model fc-demo
 juju model-config kernel-image-path="$KERNEL_IMAGE"
 juju model-config rootfs-path="$ROOTFS_IMAGE"
@@ -156,7 +170,7 @@ juju model-config cni-config-path="$JUJU_FC_CNI_CONFIG_PATH"
 juju model-config cgroup-base="$JUJU_FC_CGROUP_BASE"
 ```
 
-4. Deploy a small test charm. This uses the Ubuntu charm and installs BusyBox
+5. Deploy a small test charm. This uses the Ubuntu charm and installs BusyBox
    inside the disposable unit:
 
 ```bash
@@ -170,7 +184,7 @@ A passing smoke test must show the unit as `active` and print
 `juju-firecracker-ok`. This validates a workload path; it does not prove
 production isolation, performance, or controller HA.
 
-5. Destroy every disposable resource after the test, even when the workload
+6. Destroy every disposable resource after the test, even when the workload
    fails:
 
 ```bash
