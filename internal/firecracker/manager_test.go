@@ -1,13 +1,17 @@
 package firecracker
 
 import (
+	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	sdk "github.com/firecracker-microvm/firecracker-go-sdk"
 )
 
 type testFS struct {
@@ -137,4 +141,71 @@ func TestConcurrentListAndStartStop(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestSDKConfigMapsTypedRequest(t *testing.T) {
+	_, network, _ := net.ParseCIDR("192.0.2.10/24")
+	cfg, err := SDKConfig(VMRequest{ID: "vm", SocketPath: "/run/vm.sock", KernelPath: "/boot/vmlinux", RootFSPath: "/var/lib/vm.ext4", TapName: "tap0", MACAddress: "02:00:00:00:00:01", IP: *network, VCPU: 2, MemoryMiB: 1024, KernelArgs: "console=ttyS0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.VMID != "vm" || cfg.SocketPath != "/run/vm.sock" || cfg.KernelImagePath != "/boot/vmlinux" || cfg.KernelArgs != "console=ttyS0" {
+		t.Fatalf("unexpected SDK config: %+v", cfg)
+	}
+	if len(cfg.Drives) != 1 || sdk.StringValue(cfg.Drives[0].PathOnHost) != "/var/lib/vm.ext4" || !sdk.BoolValue(cfg.Drives[0].IsRootDevice) {
+		t.Fatalf("unexpected drives: %+v", cfg.Drives)
+	}
+	if cfg.MachineCfg.VcpuCount == nil || sdk.Int64Value(cfg.MachineCfg.VcpuCount) != 2 || sdk.Int64Value(cfg.MachineCfg.MemSizeMib) != 1024 {
+		t.Fatalf("unexpected machine sizing: %+v", cfg.MachineCfg)
+	}
+	if cfg.NetworkInterfaces[0].StaticConfiguration.HostDevName != "tap0" || cfg.NetworkInterfaces[0].StaticConfiguration.MacAddress != "02:00:00:00:00:01" {
+		t.Fatalf("unexpected network: %+v", cfg.NetworkInterfaces)
+	}
+}
+
+type fakeMachine struct {
+	sdk.MachineIface
+	started, shutdown, stopped, waited bool
+}
+
+func (m *fakeMachine) Start(context.Context) error    { m.started = true; return nil }
+func (m *fakeMachine) Shutdown(context.Context) error { m.shutdown = true; return nil }
+func (m *fakeMachine) StopVMM() error                 { m.stopped = true; return nil }
+func (m *fakeMachine) Wait(context.Context) error     { m.waited = true; return nil }
+
+func TestSDKStartStopUsesMachineAndCleansCgroup(t *testing.T) {
+	fs := newTestFS()
+	machine := &fakeMachine{}
+	m := NewFirecrackerManagerWithOptions("/cg", Options{FS: fs, NewMachine: func(_ context.Context, cfg sdk.Config) (sdk.MachineIface, error) {
+		if cfg.JailerCfg == nil || cfg.JailerCfg.CgroupVersion != "2" {
+			t.Fatalf("missing cgroup-v2 jailer config: %+v", cfg.JailerCfg)
+		}
+		return machine, nil
+	}})
+	dir := t.TempDir()
+	kernel := filepath.Join(dir, "vmlinux")
+	rootfs := filepath.Join(dir, "rootfs")
+	config := filepath.Join(dir, "vm.json")
+	if err := os.WriteFile(kernel, []byte("kernel"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rootfs, []byte("rootfs"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"kernel_image_path":"` + kernel + `","rootfs":"` + rootfs + `","network_interface":"tap0","mac_address":"02:00:00:00:00:01","vcpu":1,"memory_mib":128}`
+	if err := os.WriteFile(config, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartVM("vm", filepath.Join(dir, "vm.sock"), config); err != nil {
+		t.Fatal(err)
+	}
+	if !machine.started || len(m.ListVMs()) != 1 {
+		t.Fatalf("machine was not started: %+v", machine)
+	}
+	if err := m.StopVM("vm"); err != nil {
+		t.Fatal(err)
+	}
+	if !machine.shutdown || !machine.stopped || !machine.waited || len(m.ListVMs()) != 0 {
+		t.Fatalf("machine was not stopped and forgotten: %+v", machine)
+	}
 }

@@ -2,6 +2,7 @@
 package provider
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
@@ -76,8 +77,9 @@ func New(opts Options) (*FirecrackerProvider, error) {
 	}
 	if opts.VM == nil {
 		opts.VM = firecracker.NewFirecrackerManagerWithOptions(cfg.CgroupBase, firecracker.Options{
-			Command:     cfg.FirecrackerBinary,
-			StopTimeout: cfg.StopTimeout,
+			Command:         cfg.FirecrackerBinary,
+			StopTimeout:     cfg.StopTimeout,
+			ShutdownTimeout: cfg.ShutdownTimeout,
 		})
 	}
 
@@ -144,7 +146,10 @@ func (p *FirecrackerProvider) writeConfig(id instance.Id, ip, tap string) (strin
 		RootFS           string `json:"rootfs"`
 		NetworkInterface string `json:"network_interface"`
 		IP               string `json:"ip"`
-	}{p.kernelPath, p.rootFSPath, tap, ip}
+		MACAddress       string `json:"mac_address"`
+		VCPU             int64  `json:"vcpu"`
+		MemoryMiB        int64  `json:"memory_mib"`
+	}{p.kernelPath, p.rootFSPath, tap, ip, macForID(string(id)), 1, 512}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return "", "", err
@@ -153,6 +158,13 @@ func (p *FirecrackerProvider) writeConfig(id instance.Id, ip, tap string) (strin
 		return "", "", fmt.Errorf("write VM config: %w", err)
 	}
 	return configPath, socketPath, nil
+}
+
+// macForID gives the guest a stable locally-administered address. CNI remains
+// the owner of the host-side attachment; the SDK only needs the guest MAC.
+func macForID(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
 }
 
 // StopInstances is idempotent and attempts both VM and network cleanup for
