@@ -91,11 +91,11 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y gcc-aarch64-linux-gnu
           fi
-          bundle_dir="bundle-${VERSION}-${ARCH}"
+          bundle_dir="$GITHUB_WORKSPACE/bundle-${VERSION}-${ARCH}"
           BUILD_ONLY=1 scripts/build-juju-firecracker.sh "$bundle_dir"
           ls -l "$bundle_dir/bin/juju" "$bundle_dir/bin/jujud" "$bundle_dir/BUILD-INFO"
           tar -czf "$GITHUB_WORKSPACE/juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz" \
-            -C "$GITHUB_WORKSPACE/$bundle_dir" bin/juju bin/jujud BUILD-INFO
+            -C "$bundle_dir" bin/juju bin/jujud BUILD-INFO
           tar -tzf "$GITHUB_WORKSPACE/juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz"
           sha256sum "juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz" >> "checksums-${ARCH}.txt"
       - name: Upload build artifacts
