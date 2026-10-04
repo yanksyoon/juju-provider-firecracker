@@ -56,6 +56,11 @@ var configSchema = environschema.Fields{
 		Type:        environschema.Tstring,
 		Group:       environschema.ProviderGroup,
 	},
+	"cross-controller-settings": {
+		Description: "Optional strict JSON contract for a disposable cross-controller smoke test; contains no credentials",
+		Type:        environschema.Tstring,
+		Group:       environschema.ProviderGroup,
+	},
 	"stop-timeout": {
 		Description: "Grace period for Firecracker VM shutdown (duration string, e.g. 5s)",
 		Type:        environschema.Tstring,
@@ -75,7 +80,7 @@ var configDefaults = schema.Defaults{
 	"cgroup-base":          "/sys/fs/cgroup/juju-fc",
 	"config-dir":           "/var/lib/juju-firecracker/configs",
 	"socket-dir":           "/var/lib/juju-firecracker/sockets",
-	"metadata-listen-addr": "127.0.0.1",
+	"metadata-listen-addr": "127.0.0.1:8080",
 	"stop-timeout":         "5s",
 	"shutdown-timeout":     "5s",
 }

@@ -2,6 +2,94 @@
 
 This repository contains a Go implementation scaffold for a Juju provider backed by Firecracker microVMs. It combines CNI networking, an HTTP metadata service, and cgroup-based process isolation. Scope and acceptance criteria are tracked in [PROJECT.md](PROJECT.md).
 
+## Installation and Usage
+
+This is a Linux-only provider scaffold. The repository is the source of truth for
+configuration; the detailed design and host contract are in
+[docs/architecture.md](docs/architecture.md) and the runtime configuration table
+below.
+
+### Prerequisites
+
+- Go 1.26.6 or newer, as required by `go.mod`.
+- For a real VM: Linux with accessible `/dev/kvm`, cgroup v2 with a writable
+  provider subtree, a Firecracker binary on `PATH`, and CNI `bridge` and
+  `host-local` plugins.
+- A disposable guest kernel and rootfs image, plus a disposable CNI conflist.
+  `configs/juju-fc.conflist` is a reference only; do not install it over a
+  host's system configuration.
+
+The Firecracker, KVM, CNI, cgroup, kernel, and rootfs prerequisites are normally
+unavailable on ordinary workstations and hosted CI. They are not needed for
+editing the repository or running its safe tests.
+
+### Build and safe verification
+
+From the repository root:
+
+```bash
+go build -o juju-firecracker ./cmd/juju-firecracker
+sudo install -m 0755 juju-firecracker /usr/local/bin/juju-firecracker  # optional; needs privilege
+go test ./...
+go vet ./...
+test -z "$(gofmt -l .)"
+git diff --check
+```
+
+The binary registers the `firecracker` provider when Juju invokes it and must
+remain available on the host where Juju discovers providers. No credentials,
+cloud endpoint, or kubeconfig is required by this local provider.
+
+### Disposable real integration test
+
+Only run this on an isolated Linux host with disposable resources. Replace each
+placeholder with an existing path on that host; do not use production CNI or
+cgroup state:
+
+```bash
+export CNI_PATH=/path/to/cni/bin
+export JUJU_FC_RUN_E2E=1
+export JUJU_FC_E2E_CNI_CONFIG=/path/to/disposable/juju-fc.conflist
+export JUJU_FC_CGROUP_BASE=/path/to/writable/cgroup-v2/juju-fc
+export JUJU_FC_E2E_KERNEL=/path/to/disposable/vmlinux
+export JUJU_FC_E2E_ROOTFS=/path/to/disposable/rootfs.ext4
+go test -count=1 -timeout=60s -v ./test/integration -run '^TestEndToEnd$'
+```
+
+The test refuses system CNI paths and configured production Juju targets. It
+cleans up its VM, CNI allocation, cgroup, sockets, and temporary files. The
+ordinary `go test ./...` command does not prove a real Firecracker deployment.
+The workflow's privileged job is opt-in and requires a labeled self-hosted
+runner; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Juju acceptance contract (not a local smoke test)
+
+After installing the registration binary and preparing the prerequisites above,
+an operator may use a disposable Juju controller/model. Set the required model
+configuration with machine-specific paths, then exercise the smallest workload
+flow:
+
+```bash
+export DISPOSABLE_CONTROLLER=fc-test-controller
+juju bootstrap firecracker "$DISPOSABLE_CONTROLLER" --no-gui
+juju add-model fc-demo
+juju model-config kernel-image-path=/path/to/disposable/vmlinux
+juju model-config rootfs-path=/path/to/disposable/rootfs.ext4
+juju deploy ubuntu --channel=stable fc-ubuntu
+juju status --wait 10m
+
+# After verification, clean up every disposable Juju resource.
+juju destroy-application fc-ubuntu --force
+juju destroy-model fc-demo --destroy-storage --force --no-wait
+juju destroy-controller "$DISPOSABLE_CONTROLLER" --destroy-all-models --force
+```
+
+This flow is an acceptance contract, not a claim that this checkout has passed a
+controller deployment. Use only a disposable controller/model and guest image;
+remove any host resources after testing. Do not put credentials or private
+endpoints in this document. See [docs/acceptance-audit.md](docs/acceptance-audit.md)
+for the current implementation boundary.
+
 ## Architecture
 
 ```text
@@ -16,7 +104,7 @@ Firecracker provider
   +-------+--------+--> Firecracker VM
 ```
 
-The detailed design, lifecycle, and privileged-host requirements are in [docs/architecture.md](docs/architecture.md). Keep design changes there rather than duplicating protocol details in this file.
+The detailed design, lifecycle, and privileged-host requirements are in [docs/architecture.md](docs/architecture.md). The bounded LXD guest boundary and its opt-in smoke path are documented in [docs/lxd-compatibility.md](docs/lxd-compatibility.md). Keep design changes there rather than duplicating protocol details in this file.
 
 ## Prerequisites for the planned implementation
 
@@ -63,10 +151,15 @@ go test -count=1 -timeout=60s -v ./test/integration -run '^TestEndToEnd$'
 
 The test above exercises the provider's real CNI, metadata, Firecracker, and
 cgroup lifecycle. It is not a Juju controller acceptance test. This checkout
-does not yet register a provider with Juju or implement the remaining
-`environs.Environ` capabilities needed by `juju bootstrap`; therefore the
-bootstrap/deploy flow below is documented as the acceptance contract and must
-not be reported as passing for this checkout.
+registers the provider and implements the `environs.Environ` surface, but the
+bootstrap/deploy flow remains an acceptance contract and must not be reported
+as passing without a disposable controller run.
+
+For a side-effect-free prerequisite check and an explicitly gated LXD
+provider-registration smoke test, see
+[`docs/lxd-compatibility.md`](docs/lxd-compatibility.md). The smoke test does
+not bootstrap or contact a Juju controller/model and must not be presented as
+Firecracker workload compatibility.
 
 ## Juju bootstrap/deploy acceptance flow
 
@@ -116,7 +209,8 @@ All operator-configurable values are consolidated in `internal/provider/config.g
 | `cgroup-base` | `/sys/fs/cgroup/juju-fc` | cgroup v2 base path |
 | `config-dir` | `/var/lib/juju-firecracker/configs` | Per-VM config directory |
 | `socket-dir` | `/var/lib/juju-firecracker/sockets` | Per-VM API socket directory |
-| `metadata-listen-addr` | `127.0.0.1` | Metadata HTTP server listen address |
+| `metadata-listen-addr` | `127.0.0.1:8080` | Metadata HTTP server listen address |
+| `cross-controller-settings` | *(optional)* | Strict secret-free JSON settings contract; see [cross-controller compatibility](docs/cross-controller-compatibility.md) |
 | `stop-timeout` | `5s` | Grace period for VM shutdown |
 | `shutdown-timeout` | `5s` | Grace period for metadata server shutdown |
 
@@ -149,5 +243,6 @@ Tasks 1–5 in `PROJECT.md` describe the provider and integration work. Task 6 s
 - Setup and repository status: this file.
 - Runtime design and protocols: [docs/architecture.md](docs/architecture.md).
 - Disposable Juju performance campaign and measurement matrix: [docs/performance-profiling-campaign.md](docs/performance-profiling-campaign.md).
+- Disposable Canonical K8s cross-controller settings and gated smoke procedure: [docs/cross-controller-compatibility.md](docs/cross-controller-compatibility.md).
 - Local development, tests, and pull requests: [CONTRIBUTING.md](CONTRIBUTING.md).
 - Scope and acceptance criteria: [PROJECT.md](PROJECT.md).

@@ -24,7 +24,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.SocketDir != "/var/lib/juju-firecracker/sockets" {
 		t.Fatalf("SocketDir = %q", cfg.SocketDir)
 	}
-	if cfg.MetadataListenAddr != "127.0.0.1" {
+	if cfg.MetadataListenAddr != "127.0.0.1:8080" {
 		t.Fatalf("MetadataListenAddr = %q", cfg.MetadataListenAddr)
 	}
 	if cfg.StopTimeout != 5*time.Second {
@@ -111,6 +111,34 @@ func TestNewConfigPrecedence(t *testing.T) {
 	}
 	if cfg.CgroupBase != "/from-model" {
 		t.Fatalf("cgroup-base = %q (model should beat env)", cfg.CgroupBase)
+	}
+}
+
+func TestMetadataListenPrecedence(t *testing.T) {
+	os.Setenv("JUJU_FC_METADATA_LISTEN", "127.0.0.1:9090")
+	defer os.Unsetenv("JUJU_FC_METADATA_LISTEN")
+
+	cfg, err := NewConfig(map[string]interface{}{
+		"kernel-image-path":    "/kernel",
+		"rootfs-path":          "/rootfs",
+		"metadata-listen-addr": "127.0.0.1:9191",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetadataListenAddr != "127.0.0.1:9191" {
+		t.Fatalf("metadata listen address = %q (model should beat env)", cfg.MetadataListenAddr)
+	}
+
+	cfg, err = NewConfig(map[string]interface{}{
+		"kernel-image-path": "/kernel",
+		"rootfs-path":       "/rootfs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetadataListenAddr != "127.0.0.1:9090" {
+		t.Fatalf("metadata listen address = %q (env should beat default)", cfg.MetadataListenAddr)
 	}
 }
 
@@ -246,5 +274,29 @@ func TestCNIBinDirsFromEnv(t *testing.T) {
 	}
 	if len(cfg.CNIBinDirs) != 2 {
 		t.Fatalf("CNIBinDirs = %v", cfg.CNIBinDirs)
+	}
+}
+
+func TestCrossControllerSettingsRoundTripAndValidation(t *testing.T) {
+	settings := `{"enabled":true,"controller_name":"disposable-k8s","api_addresses":["127.0.0.1:17070"],"model_name":"fc-compat","offer_name":"fc-offer","cleanup":true}`
+	cfg, err := NewConfig(map[string]interface{}{"kernel-image-path": "/kernel", "rootfs-path": "/rootfs", "metadata-listen-addr": "127.0.0.1:8080", "cross-controller-settings": settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CrossControllerSettings != settings {
+		t.Fatalf("settings were not preserved: %q", cfg.CrossControllerSettings)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCrossControllerSettingsMalformedFailsClosed(t *testing.T) {
+	cfg, err := NewConfig(map[string]interface{}{"kernel-image-path": "/kernel", "rootfs-path": "/rootfs", "metadata-listen-addr": "127.0.0.1:8080", "cross-controller-settings": `{"enabled":true}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected malformed cross-controller settings to fail validation")
 	}
 }

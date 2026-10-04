@@ -26,6 +26,9 @@ type Config struct {
 	// Network
 	MetadataListenAddr string
 
+	// CrossControllerSettings is an optional secret-free JSON contract.
+	CrossControllerSettings string
+
 	// Timeouts
 	StopTimeout     time.Duration
 	ShutdownTimeout time.Duration
@@ -40,7 +43,7 @@ func DefaultConfig() Config {
 		CgroupBase:         "/sys/fs/cgroup/juju-fc",
 		ConfigDir:          "/var/lib/juju-firecracker/configs",
 		SocketDir:          "/var/lib/juju-firecracker/sockets",
-		MetadataListenAddr: "127.0.0.1",
+		MetadataListenAddr: "127.0.0.1:8080",
 		StopTimeout:        5 * time.Second,
 		ShutdownTimeout:    5 * time.Second,
 	}
@@ -117,6 +120,9 @@ func NewConfig(attrs map[string]interface{}) (Config, error) {
 	}
 	if v, ok := attrs["socket-dir"].(string); ok && v != "" {
 		cfg.SocketDir = v
+	}
+	if v, ok := attrs["cross-controller-settings"].(string); ok && v != "" {
+		cfg.CrossControllerSettings = v
 	}
 	if v, ok := attrs["metadata-listen-addr"].(string); ok && v != "" {
 		cfg.MetadataListenAddr = v
@@ -203,6 +209,11 @@ func (c Config) Validate() error {
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("shutdown-timeout must be positive, got %s", c.ShutdownTimeout)
+	}
+	if c.CrossControllerSettings != "" {
+		if _, err := ParseCrossControllerConfig([]byte(c.CrossControllerSettings)); err != nil {
+			return fmt.Errorf("cross-controller-settings: %w", err)
+		}
 	}
 
 	// CNI config must have .conflist extension.
