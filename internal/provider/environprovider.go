@@ -37,7 +37,9 @@ func (ep *environProvider) PrepareConfig(args environs.PrepareConfigParams) (*co
 // CredentialSchemas returns the supported credential schemas. Firecracker
 // runs locally and has no cloud credentials.
 func (ep *environProvider) CredentialSchemas() map[cloud.AuthType]cloud.CredentialSchema {
-	return map[cloud.AuthType]cloud.CredentialSchema{}
+	return map[cloud.AuthType]cloud.CredentialSchema{
+		cloud.EmptyAuthType: {},
+	}
 }
 
 // DetectRegions reports the local region used by the Firecracker provider.

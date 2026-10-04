@@ -146,8 +146,8 @@ func TestEnvironProviderOpen(t *testing.T) {
 	}
 
 	credSchemas := ep.CredentialSchemas()
-	if len(credSchemas) != 0 {
-		t.Fatal("expected no credential schemas")
+	if len(credSchemas) != 1 {
+		t.Fatalf("expected only the empty credential schema, got %#v", credSchemas)
 	}
 
 	cred, err := ep.DetectCredentials("")
@@ -187,7 +187,7 @@ func TestProviderRegistrationAndLocalRegion(t *testing.T) {
 	if regions[0].Endpoint != "local" || regions[0].IdentityEndpoint != "" || regions[0].StorageEndpoint != "" {
 		t.Fatalf("unexpected local region endpoints: %#v", regions[0])
 	}
-	if got := ep.CredentialSchemas(); len(got) != 0 {
-		t.Fatalf("Firecracker must not require credentials: %#v", got)
+	if got := ep.CredentialSchemas(); len(got) != 1 {
+		t.Fatalf("Firecracker should expose only the empty credential schema: %#v", got)
 	}
 }
