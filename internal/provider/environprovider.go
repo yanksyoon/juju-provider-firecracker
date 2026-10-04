@@ -41,6 +41,13 @@ func (ep *environProvider) CredentialSchemas() map[cloud.AuthType]cloud.Credenti
 	return map[cloud.AuthType]cloud.CredentialSchema{}
 }
 
+// DetectRegions reports the local region used by the Firecracker provider.
+// Firecracker has no remote cloud endpoint, so the region deliberately has no
+// endpoint fields. The first region is the default selected by Juju bootstrap.
+func (ep *environProvider) DetectRegions() ([]cloud.Region, error) {
+	return []cloud.Region{{Name: "local", Endpoint: "local"}}, nil
+}
+
 // DetectCredentials returns an empty credential — Firecracker has no remote auth.
 func (ep *environProvider) DetectCredentials(_ string) (*cloud.CloudCredential, error) {
 	return nil, errors.NotFoundf("credentials for firecracker")

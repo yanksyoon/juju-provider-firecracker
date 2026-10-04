@@ -162,3 +162,28 @@ func TestEnvironProviderOpen(t *testing.T) {
 		t.Fatal("expected a credential")
 	}
 }
+
+func TestProviderRegistrationAndLocalRegion(t *testing.T) {
+	ep, err := environs.Provider("firecracker")
+	if err != nil {
+		t.Fatalf("provider registration: %v", err)
+	}
+
+	detector, ok := ep.(environs.CloudRegionDetector)
+	if !ok {
+		t.Fatal("registered provider does not detect cloud regions")
+	}
+	regions, err := detector.DetectRegions()
+	if err != nil {
+		t.Fatalf("detect regions: %v", err)
+	}
+	if len(regions) != 1 || regions[0].Name != "local" {
+		t.Fatalf("unexpected regions: %#v", regions)
+	}
+	if regions[0].Endpoint != "local" || regions[0].IdentityEndpoint != "" || regions[0].StorageEndpoint != "" {
+		t.Fatalf("unexpected local region endpoints: %#v", regions[0])
+	}
+	if got := ep.CredentialSchemas(); len(got) != 0 {
+		t.Fatalf("Firecracker must not require credentials: %#v", got)
+	}
+}

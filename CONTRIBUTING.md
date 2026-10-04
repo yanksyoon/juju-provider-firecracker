@@ -27,7 +27,7 @@ The workflow uses the same safe commands. Keep this document and `.github/workfl
 
 Release changes must also preserve the checks in `.github/workflows/release.yml`:
 only semantic-version tags or an explicit dispatch may publish, and the release
-must contain both Linux architectures, `version.txt`, and `checksums.txt`. Do
+must contain both Linux architectures and `checksums.txt`. Do
 not test an installer by writing to `/usr/local/bin`; use a temporary
 `INSTALL_DIR` and a local fixture or static validation instead. Never commit
 generated binaries or release credentials.

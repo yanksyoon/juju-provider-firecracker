@@ -1,11 +1,11 @@
 # Release and installation
 
-The supported user path is the release binary, not a source checkout. Releases
-are created by `.github/workflows/release.yml` only for `vMAJOR.MINOR.PATCH`
+The provider-only release binary is a development/runtime artifact, not a Juju
+provider plugin. Releases are created by `.github/workflows/release.yml` only for `vMAJOR.MINOR.PATCH`
 tags or an explicit workflow dispatch with that same version. The workflow
 builds the provider registration binary with `CGO_ENABLED=0` for Linux `amd64`
 and `arm64`, embeds the release tag as build metadata, and publishes named
-binary assets, `version.txt`, and `checksums.txt` to the GitHub Release.
+binary assets and `checksums.txt` to the GitHub Release.
 
 The workflow grants read-only repository access to build jobs and write access
 only to the publish job. It validates the version before using it, never
@@ -38,10 +38,14 @@ existing writable directory. A privileged fallback requires non-interactive
 the downloaded binary, so a failed verification or installation never replaces
 an existing binary.
 
-After installation, ensure the printed path is on the host's Juju provider
-search path. To roll back, install an earlier release. To uninstall, remove the
-printed `juju-firecracker` file; no service or host configuration is created by
-the installer.
+After installation, the printed binary can be used for provider-package and
+lifecycle development only. It is not loaded by stock Juju and cannot make
+`firecracker` discoverable. Do not use it as a workaround for
+`juju bootstrap firecracker`; that command requires matching custom `juju` and
+`jujud` binaries built from the pinned Juju integration described in
+`docs/juju-provider-registration-boundary-plan.md`. To roll back, install an
+earlier provider release. To uninstall, remove the printed
+`juju-firecracker` file; no service or host configuration is created.
 
 ## Development fallback
 

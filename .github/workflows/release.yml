@@ -1,4 +1,4 @@
-name: Release provider binaries
+name: Release Firecracker provider artifacts
 
 on:
   push:

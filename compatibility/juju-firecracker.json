@@ -1,0 +1,14 @@
+{
+  "provider": "firecracker",
+  "integration": "in-process-vendored-provider",
+  "juju_module": "github.com/juju/juju",
+  "juju_version": "v0.0.0-20260930100434-f5b474c76eba",
+  "juju_commit": "f5b474c76ebac3934e2df1e173f85922c48258f5",
+  "registration_package": "github.com/juju/juju/internal/provider/all",
+  "region": "local",
+  "credentials": false,
+  "matching_binaries": ["juju", "jujud"],
+  "build_command": "scripts/build-juju-firecracker.sh",
+  "stock_juju_supported": false,
+  "artifacts_published": false
+}

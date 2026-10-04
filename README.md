@@ -87,33 +87,91 @@ ordinary `go test ./...` command does not prove a real Firecracker deployment.
 The workflow's privileged job is opt-in and requires a labeled self-hosted
 runner; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Juju acceptance contract (not a local smoke test)
+### Install, bootstrap Juju, and run a workload smoke test
 
-After installing the registration binary and preparing the prerequisites above,
-an operator may use a disposable Juju controller/model. Set the required model
-configuration with machine-specific paths, then exercise the smallest workload
-flow:
+This is the canonical operator walkthrough. Run it only on a disposable Linux
+host or LXD VM. It requires Juju, KVM, cgroup v2, Firecracker, CNI plugins, a
+disposable guest kernel/rootfs, and a disposable CNI configuration. The release
+installer installs the provider registration binary; it does not install or
+configure Firecracker, Juju, CNI, the kernel, or the rootfs.
+
+1. Install a pinned provider release. Set `INSTALL_DIR` if `/usr/local/bin` is
+   not writable:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yanksyoon/juju-provider-firecracker/main/scripts/install.sh \
+  | JUJU_FIRECRACKER_VERSION=v0.0.1 INSTALL_DIR="$HOME/.local/bin" sh
+export PATH="$HOME/.local/bin:$PATH"
+test -x "$(command -v juju-firecracker)"
+```
+
+2. Prepare the disposable host. Set these to real paths on the host; do not use
+   production CNI state or guest images:
+
+```bash
+export CNI_PATH=/path/to/cni/bin
+export JUJU_FC_CNI_CONFIG_PATH=/path/to/disposable/juju-fc.conflist
+export JUJU_FC_CGROUP_BASE=/path/to/disposable/cgroup-v2/juju-fc
+export KERNEL_IMAGE=/path/to/disposable/vmlinux
+export ROOTFS_IMAGE=/path/to/disposable/rootfs.ext4
+```
+
+The CNI configuration must provide a Firecracker-compatible TAP attachment,
+non-overlapping address space, host firewall/isolation policy, and cleanup
+ownership. The provider must be able to access `/dev/kvm` and the configured
+cgroup subtree.
+
+3. Bootstrap a disposable controller and model with the matching custom Juju
+   distribution. The provider must be compiled into both `juju` and `jujud`
+   from a Juju fork that blank-imports this repository's public `provider`
+   package. Installing `juju-firecracker` alone is insufficient: stock Juju
+   returns `unknown cloud "firecracker"`, and a stock controller cannot load
+   the provider from the client host. The reproducible integration contract is
+   documented in `docs/juju-provider-registration-boundary-plan.md`; no custom
+   Juju release is published by this repository yet.
 
 ```bash
 export DISPOSABLE_CONTROLLER=fc-test-controller
+# Put the matching fork's bin directory first; it must contain both juju and jujud.
+export PATH=/path/to/juju-firecracker-build/dist:$PATH
 juju bootstrap firecracker "$DISPOSABLE_CONTROLLER" --no-gui
 juju add-model fc-demo
-juju model-config kernel-image-path=/path/to/disposable/vmlinux
-juju model-config rootfs-path=/path/to/disposable/rootfs.ext4
-juju deploy ubuntu --channel=stable fc-ubuntu
-juju status --wait 10m
+juju model-config kernel-image-path="$KERNEL_IMAGE"
+juju model-config rootfs-path="$ROOTFS_IMAGE"
+juju model-config cni-config-path="$JUJU_FC_CNI_CONFIG_PATH"
+juju model-config cgroup-base="$JUJU_FC_CGROUP_BASE"
+```
 
-# After verification, clean up every disposable Juju resource.
-juju destroy-application fc-ubuntu --force
+4. Deploy a small test workload. Juju's `ubuntu` charm is used with the
+application name `busybox-smoke`; BusyBox is installed inside the disposable
+unit and then executed to verify instance creation, networking, SSH, and guest
+command execution:
+
+```bash
+juju deploy ubuntu busybox-smoke --channel=stable
+juju status --wait 10m
+juju ssh busybox-smoke/0 -- \
+  'sudo apt-get update && sudo apt-get install -y busybox-static && /bin/busybox echo juju-firecracker-ok'
+```
+
+A passing smoke test must show the unit as `active` and print
+`juju-firecracker-ok`. This validates a workload path; it does not prove
+production isolation, performance, or controller HA.
+
+5. Destroy every disposable resource after the test, even when the workload
+fails:
+
+```bash
+juju destroy-application busybox-smoke --force
 juju destroy-model fc-demo --destroy-storage --force --no-wait
 juju destroy-controller "$DISPOSABLE_CONTROLLER" --destroy-all-models --force
 ```
 
-This flow is an acceptance contract, not a claim that this checkout has passed a
-controller deployment. Use only a disposable controller/model and guest image;
-remove any host resources after testing. Do not put credentials or private
-endpoints in this document. See [docs/acceptance-audit.md](docs/acceptance-audit.md)
-for the current implementation boundary.
+This walkthrough is an acceptance contract, not a claim that the repository's
+checkout has completed a live controller deployment. Record the exact first
+failed prerequisite or command instead of substituting mocks. See
+[docs/acceptance-audit.md](docs/acceptance-audit.md) for the current evidence and
+known implementation boundary.
 
 ## Architecture
 
@@ -188,35 +246,12 @@ Firecracker workload compatibility.
 
 ## Juju bootstrap/deploy acceptance flow
 
-Run this only in a disposable LXD VM or an equivalently isolated Linux host.
-Do not use a production controller, model, credential, CNI state directory,
-or guest image. The host must first satisfy the prerequisites above and have
-the provider registration binary installed at `/usr/local/bin/juju-firecracker`.
+The canonical install, disposable bootstrap, BusyBox smoke test, and cleanup
+procedure is documented above in [Install, bootstrap Juju, and run a workload
+smoke test](#install-bootstrap-juju-and-run-a-workload-smoke-test). Keep that
+section as the single source of truth. The procedure is prerequisite-gated and
+must not be reported as passing without a real disposable controller run.
 
-```bash
-# From the isolated host, after installing the provider registration package:
-juju bootstrap firecracker «redacted:fc-…» --no-gui
-juju add-model fc-demo
-juju deploy ubuntu --channel=stable fc-ubuntu
-juju status --wait 10m
-juju ssh fc-ubuntu/0 -- 'cloud-init status --wait && uname -a'
-
-# Verify the workload, then remove every disposable resource.
-juju status --format=yaml > /tmp/fc-demo-status.yaml
-juju destroy-application fc-ubuntu --force
-juju destroy-model fc-demo --destroy-storage --force --no-wait
-juju destroy-controller «redacted:fc-…» --destroy-all-models --force
-```
-
-Acceptance requires `fc-ubuntu` to reach `active/0`, the SSH/cloud-init
-check to succeed through the Firecracker network, and the final commands to
-leave no Juju model/controller, VM, TAP device, CNI allocation, cgroup, or
-process. Provider registration and the full `environs.Environ` interface are
-implemented (T10), but host prerequisites (Firecracker binary, kernel, rootfs,
-CNI config at system path) are still required. The current status and exact
-blockers are recorded in
-[`docs/acceptance-audit.md`](docs/acceptance-audit.md); no command above was
-executed or claimed as successful.
 
 ## Runtime configuration
 
