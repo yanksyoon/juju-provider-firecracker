@@ -44,11 +44,25 @@ func (f *fakeVM) StartVM(id, _, _ string) error { f.started = append(f.started, 
 func (f *fakeVM) StopVM(id string) error        { f.stopped = append(f.stopped, id); return f.stopErr }
 func (f *fakeVM) ListVMs() []string             { return append([]string(nil), f.ids...) }
 
+func testConfig() Config {
+	return Config{
+		KernelImagePath: "/tmp/kernel",
+		RootFSPath:      "/tmp/rootfs",
+		CgroupBase:      "/test/cgroup",
+		CNIConfigPath:   "/test/cni.conflist",
+		StopTimeout:     5e9, // 5s as ns
+		ShutdownTimeout: 5e9,
+	}
+}
+
 func TestLifecycleOrchestratesDependenciesAndRollsBack(t *testing.T) {
 	net := &fakeNetwork{ip: "192.168.100.5", tap: "tap0"}
 	meta := &fakeMetadata{}
 	vm := &fakeVM{}
-	p, err := New(Options{Network: net, Metadata: meta, VM: vm, ConfigDir: t.TempDir(), SocketDir: t.TempDir()})
+	cfg := testConfig()
+	cfg.ConfigDir = t.TempDir()
+	cfg.SocketDir = t.TempDir()
+	p, err := New(Options{Config: cfg, Network: net, Metadata: meta, VM: vm})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +88,10 @@ func TestLifecycleOrchestratesDependenciesAndRollsBack(t *testing.T) {
 func TestStartRollsBackNetworkWhenVMFails(t *testing.T) {
 	net := &fakeNetwork{ip: "192.168.100.6", tap: "tap1"}
 	vm := &fakeVM{startErr: errors.New("boom")}
-	p, err := New(Options{Network: net, Metadata: &fakeMetadata{}, VM: vm, ConfigDir: t.TempDir(), SocketDir: t.TempDir()})
+	cfg := testConfig()
+	cfg.ConfigDir = t.TempDir()
+	cfg.SocketDir = t.TempDir()
+	p, err := New(Options{Config: cfg, Network: net, Metadata: &fakeMetadata{}, VM: vm})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +104,10 @@ func TestStartRollsBackNetworkWhenVMFails(t *testing.T) {
 func TestInstancesListingAndUnknownStop(t *testing.T) {
 	net := &fakeNetwork{ip: "192.168.100.7", tap: "tap2"}
 	vm := &fakeVM{ids: []string{"machine-3"}, stopErr: errors.New("unexpected stop")}
-	p, err := New(Options{Network: net, Metadata: &fakeMetadata{}, VM: vm, ConfigDir: t.TempDir(), SocketDir: t.TempDir()})
+	cfg := testConfig()
+	cfg.ConfigDir = t.TempDir()
+	cfg.SocketDir = t.TempDir()
+	p, err := New(Options{Config: cfg, Network: net, Metadata: &fakeMetadata{}, VM: vm})
 	if err != nil {
 		t.Fatal(err)
 	}

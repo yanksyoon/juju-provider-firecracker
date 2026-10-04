@@ -8,11 +8,23 @@ The provider adapts the Juju instance-broker lifecycle while managing Firecracke
 
 The toolchain is the Go version declared in `go.mod` (currently Go 1.26.6). The Juju 3.x API dependency is pinned in `go.mod`. No unpinned dependency or local-home path is part of this design.
 
+## Configuration
+
+All runtime configuration is consolidated in a single typed structure (`internal/provider/config.go`). The provider reads configuration with this precedence (highest first):
+
+1. Juju model config (`model-config` keys)
+2. Environment variables (`JUJU_FC_*` and `CNI_PATH`)
+3. Hardcoded defaults (backwards-compatible with prior releases)
+
+Required fields: `kernel-image-path`, `rootfs-path`. All other fields have safe defaults documented in [README.md](../README.md#runtime-configuration).
+
+The `Config` struct carries paths (CNI config, CNI bin dirs, cgroup base, config/socket dirs, Firecracker binary, kernel, rootfs), network bind address, and timeouts (VM stop grace, metadata server shutdown). Validation rejects missing required fields, non-canonical paths, traversal components, invalid addresses, non-`.conflist` CNI paths, and non-positive timeouts.
+
 ## Components
 
 The provider coordinates three resource managers:
 
-1. **CNI network manager** allocates and releases a VM network attachment using the CNI configuration at `/etc/cni/net.d/juju-fc.conflist`.
+1. **CNI network manager** allocates and releases a VM network attachment using the configured CNI conflist.
 2. **Metadata server** serves per-instance user data over HTTP while the guest boots.
 3. **Firecracker manager** starts and stops the Firecracker process and places it in a dedicated cgroup v2 subtree.
 

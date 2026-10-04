@@ -3,7 +3,7 @@ package provider
 
 import (
 	"encoding/json"
-	"errors"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,10 +12,16 @@ import (
 	"github.com/canonical/juju-provider-firecracker/internal/firecracker"
 	"github.com/canonical/juju-provider-firecracker/internal/metadata"
 	"github.com/canonical/juju-provider-firecracker/internal/network"
+	"github.com/juju/errors"
+	"github.com/juju/juju/cloudconfig/instancecfg"
+	"github.com/juju/juju/core/constraints"
 	"github.com/juju/juju/core/instance"
 	"github.com/juju/juju/environs"
+	"github.com/juju/juju/environs/config"
 	jujucontext "github.com/juju/juju/environs/context"
 	"github.com/juju/juju/environs/instances"
+	"github.com/juju/juju/storage"
+	"github.com/juju/version/v2"
 )
 
 // Network is the portion of CNI used by the provider.
@@ -34,16 +40,14 @@ type VMManager interface {
 	ListVMs() []string
 }
 
-// Options supplies dependencies and host paths. The default constructor uses
-// the production CNI, metadata, and Firecracker implementations.
+// Options supplies dependencies for the provider. Production callers use
+// New() with only Config populated; test callers supply fakes for Network,
+// Metadata, and VM.
 type Options struct {
-	Network    Network
-	Metadata   Metadata
-	VM         VMManager
-	ConfigDir  string
-	SocketDir  string
-	KernelPath string
-	RootFSPath string
+	Config   Config
+	Network  Network
+	Metadata Metadata
+	VM       VMManager
 }
 
 // FirecrackerProvider is intentionally a thin orchestration layer. It owns no
@@ -58,8 +62,10 @@ type FirecrackerProvider struct {
 }
 
 func New(opts Options) (*FirecrackerProvider, error) {
+	cfg := opts.Config
+
 	if opts.Network == nil {
-		mgr, err := network.NewCNIManager("")
+		mgr, err := network.NewCNIManagerWithOptions(cfg.CNIConfigPath, network.CNIOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -69,17 +75,22 @@ func New(opts Options) (*FirecrackerProvider, error) {
 		opts.Metadata = metadata.NewMetadataServer()
 	}
 	if opts.VM == nil {
-		opts.VM = firecracker.NewFirecrackerManager("/sys/fs/cgroup/juju-fc")
+		opts.VM = firecracker.NewFirecrackerManagerWithOptions(cfg.CgroupBase, firecracker.Options{
+			Command:     cfg.FirecrackerBinary,
+			StopTimeout: cfg.StopTimeout,
+		})
 	}
-	if opts.ConfigDir == "" {
-		opts.ConfigDir = filepath.Join(os.TempDir(), "juju-firecracker")
+
+	if cfg.ConfigDir == "" {
+		cfg.ConfigDir = filepath.Join(os.TempDir(), "juju-firecracker")
 	}
-	if opts.SocketDir == "" {
-		opts.SocketDir = opts.ConfigDir
+	if cfg.SocketDir == "" {
+		cfg.SocketDir = cfg.ConfigDir
 	}
+
 	return &FirecrackerProvider{network: opts.Network, metadata: opts.Metadata, vm: opts.VM,
-		configDir: opts.ConfigDir, socketDir: opts.SocketDir, kernelPath: opts.KernelPath,
-		rootFSPath: opts.RootFSPath, instances: make(map[instance.Id]*FirecrackerInstance)}, nil
+		configDir: cfg.ConfigDir, socketDir: cfg.SocketDir, kernelPath: cfg.KernelImagePath,
+		rootFSPath: cfg.RootFSPath, instances: make(map[instance.Id]*FirecrackerInstance)}, nil
 }
 
 var _ environs.InstanceBroker = (*FirecrackerProvider)(nil)
@@ -89,7 +100,7 @@ var _ environs.InstanceBroker = (*FirecrackerProvider)(nil)
 // the network attachment back.
 func (p *FirecrackerProvider) StartInstance(_ jujucontext.ProviderCallContext, args environs.StartInstanceParams) (*environs.StartInstanceResult, error) {
 	if args.InstanceConfig == nil || args.InstanceConfig.MachineId == "" {
-		return nil, errors.New("instance config with machine ID is required")
+		return nil, stderrors.New("instance config with machine ID is required")
 	}
 	id := instance.Id(args.InstanceConfig.MachineId)
 	ip, tap, err := p.network.SetupNetwork(string(id))
@@ -202,6 +213,129 @@ func (p *FirecrackerProvider) AllRunningInstances(ctx jujucontext.ProviderCallCo
 	return p.AllInstances(ctx)
 }
 
-// The remaining Environ capabilities are deliberately not advertised by this
-// skeleton. Juju's full environs.Environ also requires bootstrap, storage,
-// image, and provider configuration APIs; those need real product decisions.
+// ---------- environs.Environ implementation ----------
+
+// environ wraps FirecrackerProvider to satisfy environs.Environ.
+type environ struct {
+	*FirecrackerProvider
+	cfg       *config.Config
+	ecfgMutex sync.RWMutex
+	provider  environs.EnvironProvider
+}
+
+func newEnviron(jujuCfg *config.Config, fcCfg Config) (*environ, error) {
+	prov, err := New(Options{Config: fcCfg})
+	if err != nil {
+		return nil, err
+	}
+	return &environ{
+		FirecrackerProvider: prov,
+		cfg:                 jujuCfg,
+		provider:            &environProvider{},
+	}, nil
+}
+
+func (e *environ) Config() *config.Config {
+	e.ecfgMutex.RLock()
+	defer e.ecfgMutex.RUnlock()
+	return e.cfg
+}
+
+func (e *environ) SetConfig(cfg *config.Config) error {
+	e.ecfgMutex.Lock()
+	defer e.ecfgMutex.Unlock()
+	e.cfg = cfg
+	return nil
+}
+
+func (e *environ) Provider() environs.EnvironProvider { return e.provider }
+
+func (e *environ) PrepareForBootstrap(_ environs.BootstrapContext, _ string) error {
+	return nil
+}
+
+func (e *environ) Bootstrap(ctx environs.BootstrapContext, callCtx jujucontext.ProviderCallContext, params environs.BootstrapParams) (*environs.BootstrapResult, error) {
+	_, err := e.StartInstance(callCtx, environs.StartInstanceParams{
+		ControllerUUID: params.ControllerConfig.ControllerUUID(),
+		Constraints:    params.BootstrapConstraints,
+		ImageMetadata:  params.ImageMetadata,
+		Tools:          params.AvailableTools,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap start instance: %w", err)
+	}
+	return &environs.BootstrapResult{
+		Arch: "amd64",
+		Base: params.BootstrapBase,
+		CloudBootstrapFinalizer: func(_ environs.BootstrapContext, _ *instancecfg.InstanceConfig, _ environs.BootstrapDialOpts) error {
+			return nil
+		},
+	}, nil
+}
+
+func (e *environ) Create(_ jujucontext.ProviderCallContext, _ environs.CreateParams) error {
+	return nil
+}
+
+func (e *environ) Destroy(_ jujucontext.ProviderCallContext) error {
+	ids := e.vm.ListVMs()
+	var firstErr error
+	for _, id := range ids {
+		if err := e.StopInstances(nil, instance.Id(id)); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("stop instance %q during destroy: %w", id, err)
+		}
+	}
+	return firstErr
+}
+
+func (e *environ) DestroyController(_ jujucontext.ProviderCallContext, _ string) error {
+	return e.Destroy(nil)
+}
+
+func (e *environ) ControllerInstances(_ jujucontext.ProviderCallContext, _ string) ([]instance.Id, error) {
+	ids := e.vm.ListVMs()
+	result := make([]instance.Id, len(ids))
+	for i, id := range ids {
+		result[i] = instance.Id(id)
+	}
+	if len(result) == 0 {
+		return nil, environs.ErrNoInstances
+	}
+	return result, nil
+}
+
+func (e *environ) ConstraintsValidator(_ jujucontext.ProviderCallContext) (constraints.Validator, error) {
+	v := constraints.NewValidator()
+	v.RegisterUnsupported([]string{
+		constraints.CpuPower,
+		constraints.VirtType,
+		constraints.Cores,
+	})
+	v.RegisterConflicts([]string{constraints.InstanceType}, []string{constraints.Mem})
+	return v, nil
+}
+
+func (e *environ) PrecheckInstance(_ jujucontext.ProviderCallContext, _ environs.PrecheckInstanceParams) error {
+	return nil
+}
+
+func (e *environ) InstanceTypes(_ jujucontext.ProviderCallContext, _ constraints.Value) (instances.InstanceTypesWithCostMetadata, error) {
+	return instances.InstanceTypesWithCostMetadata{}, nil
+}
+
+func (e *environ) AdoptResources(_ jujucontext.ProviderCallContext, _ string, _ version.Number) error {
+	return nil
+}
+
+// StorageProviderTypes returns no storage providers — Firecracker is ephemeral.
+func (e *environ) StorageProviderTypes() ([]storage.ProviderType, error) {
+	return nil, nil
+}
+
+// StorageProvider returns an error — no storage providers are registered.
+func (e *environ) StorageProvider(t storage.ProviderType) (storage.Provider, error) {
+	return nil, errors.NotFoundf("storage provider %q", t)
+}
+
+// Ensure compile-time interface satisfaction.
+var _ environs.Environ = (*environ)(nil)

@@ -198,9 +198,13 @@ func TestEndToEnd(t *testing.T) {
 	vmMgr := firecracker.NewFirecrackerManager(p.cgroupBase)
 	workDir := t.TempDir()
 	prov, err := provider.New(provider.Options{
+		Config: provider.Config{
+			KernelImagePath: p.kernel,
+			RootFSPath:      p.rootFS,
+			ConfigDir:       workDir,
+			SocketDir:       workDir,
+		},
 		Network: netMgr, Metadata: meta, VM: vmMgr,
-		ConfigDir: workDir, SocketDir: workDir,
-		KernelPath: p.kernel, RootFSPath: p.rootFS,
 	})
 	if err != nil {
 		t.Fatalf("create provider: %v", err)

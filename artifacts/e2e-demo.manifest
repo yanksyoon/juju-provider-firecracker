@@ -2,11 +2,16 @@ artifact: artifacts/e2e-demo.cast
 absolute_path: /home/ubuntu/canonical/juju-provider-firecracker/artifacts/e2e-demo.cast
 format: asciicast-v2
 recorded_with: asciinema 2.4.0
-recording_mode: safe prerequisite and unit/integration-gate validation
-sha256: e4f6d9ac5b5e5e2f263833f6bf9a70dabc7557109bcf78e8b6c9a3daf026ff2e
-record_command: asciinema rec --overwrite --title 'juju-provider-firecracker safe E2E validation' --command './artifacts/e2e-demo.sh' artifacts/e2e-demo.cast
+recording_mode: safe validation + provider registration + explicit prerequisite gate
+sha256: 4793353b7d89803cc6a5480fcd8ad915512baf754112296b2bcca1cc0ae6f714
+record_command: asciinema rec --overwrite artifacts/e2e-demo.cast -c "bash artifacts/e2e-demo.sh"
 README_shown_first: yes; the recording prints README.md before prerequisite checks and safe commands
 privileged_juju_run: not executed
-blockers: Firecracker binary; disposable CNI config/plugins; writable juju-fc cgroup; guest kernel; guest rootfs; provider registration and complete Juju Environ
-cleanup_evidence: no matching Firecracker process, juju-fc cgroup, or TAP interface
+provider_registration: implemented (environs.CloudEnvironProvider registered via init())
+environ_interface: implemented (full environs.Environ: 16 methods + compile-time check)
+tests: all pass with race detection; new environ tests (TestEnvironNewAndConfig, TestEnvironProviderInterface, TestEnvironProviderOpen)
+host_blockers: Firecracker binary (absent, no apt/snap); CNI config at system path (sudo blocked); JUJU_FC_E2E_KERNEL (unset); JUJU_FC_E2E_ROOTFS (unset)
+available: KVM present; CNI plugins (bridge, host-local) present; cgroup v2 mounted; /sys/fs/cgroup/juju-fc writable; Juju 3.6.29; Go 1.26.6
+cleanup_evidence: no matching Firecracker process or TAP interface; cgroup subtree present (created for T10, not used destructively)
+profile: deepseek-v4-pro (run 22)
 credentials: none
