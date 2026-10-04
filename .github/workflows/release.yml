@@ -93,7 +93,11 @@ jobs:
           fi
           bundle_dir="bundle-${VERSION}-${ARCH}"
           BUILD_ONLY=1 scripts/build-juju-firecracker.sh "$bundle_dir"
-          tar -C "$bundle_dir" -czf "juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz" bin BUILD-INFO
+          test -s "$bundle_dir/bin/juju"
+          test -s "$bundle_dir/bin/jujud"
+          test -s "$bundle_dir/BUILD-INFO"
+          tar -czf "juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz" \
+            -C "$bundle_dir" bin/juju bin/jujud BUILD-INFO
           sha256sum "juju-firecracker-bundle_${VERSION}_linux_${ARCH}.tar.gz" >> "checksums-${ARCH}.txt"
       - name: Upload build artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
