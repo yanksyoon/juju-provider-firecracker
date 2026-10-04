@@ -137,11 +137,14 @@ func TestInstancesListingAndUnknownStop(t *testing.T) {
 	if err != nil || len(selected) != 1 || selected[0].Id() != "machine-3" {
 		t.Fatalf("selected instances = %v, err = %v", selected, err)
 	}
-	// Unknown IDs must be ignored without reaching the VM or CNI boundary.
-	if err := p.StopInstances(nil, "missing"); err != nil || len(vm.stopped) != 0 || len(net.teardown) != 0 {
+	// Unknown IDs still get cleanup attempts so stale provider state cannot
+	// leave a CNI attachment behind.
+	vm.stopErr = nil
+	if err := p.StopInstances(nil, "missing"); err != nil || len(vm.stopped) != 1 || len(net.teardown) != 1 {
 		t.Fatalf("unknown stop: err=%v stopped=%v teardown=%v", err, vm.stopped, net.teardown)
 	}
 	// A failed cleanup remains tracked so a subsequent stop can retry it.
+	vm.stopErr = errors.New("unexpected stop")
 	if err := p.StopInstances(nil, "machine-3"); err == nil {
 		t.Fatal("expected stop error")
 	}
@@ -149,7 +152,7 @@ func TestInstancesListingAndUnknownStop(t *testing.T) {
 	if err := p.StopInstances(nil, "machine-3"); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.StopInstances(nil, "machine-3"); err != nil || len(vm.stopped) != 2 || len(net.teardown) != 2 {
+	if err := p.StopInstances(nil, "machine-3"); err != nil || len(vm.stopped) != 4 || len(net.teardown) != 4 {
 		t.Fatalf("repeated stop: err=%v stopped=%v teardown=%v", err, vm.stopped, net.teardown)
 	}
 }

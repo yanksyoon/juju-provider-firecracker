@@ -67,9 +67,10 @@ func SDKConfig(r VMRequest) (sdk.Config, error) {
 }
 
 type managedMachine struct {
-	machine  sdk.MachineIface
-	cgroup   string
-	waitDone chan error
+	machine    sdk.MachineIface
+	cgroup     string
+	waitDone   chan error
+	waitCancel context.CancelFunc
 }
 
 type Options struct {
@@ -139,7 +140,6 @@ func (m *FirecrackerManager) StartVM(ctx context.Context, r VMRequest) error {
 			_ = m.fs.RemoveAll(cgroup)
 		}
 	}()
-	cfg.JailerCfg = &sdk.JailerConfig{ID: r.ID, CgroupVersion: "2"}
 	machine, err := m.newMachine(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("create VM %q: %w", r.ID, err)
@@ -148,10 +148,11 @@ func (m *FirecrackerManager) StartVM(ctx context.Context, r VMRequest) error {
 		_ = machine.StopVMM()
 		return fmt.Errorf("start VM %q: %w", r.ID, err)
 	}
+	waitCtx, waitCancel := context.WithCancel(context.Background())
 	waitDone := make(chan error, 1)
-	go func() { waitDone <- machine.Wait(context.Background()) }()
+	go func() { waitDone <- machine.Wait(waitCtx) }()
 	m.mu.Lock()
-	m.machines[r.ID] = managedMachine{machine: machine, cgroup: cgroup, waitDone: waitDone}
+	m.machines[r.ID] = managedMachine{machine: machine, cgroup: cgroup, waitDone: waitDone, waitCancel: waitCancel}
 	m.mu.Unlock()
 	cleanup = false
 	return nil
@@ -176,6 +177,9 @@ func (m *FirecrackerManager) StopVM(id string) error {
 }
 func (m *FirecrackerManager) stopMachine(id string, e managedMachine) error {
 	var first error
+	if e.waitCancel != nil {
+		defer e.waitCancel()
+	}
 	if e.machine != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), m.shutdownTimeout)
 		err := e.machine.Shutdown(ctx)

@@ -156,14 +156,6 @@ func macForID(id string) string {
 func (p *FirecrackerProvider) StopInstances(_ jujucontext.ProviderCallContext, ids ...instance.Id) error {
 	var first error
 	for _, id := range ids {
-		p.mu.RLock()
-		_, known := p.instances[id]
-		p.mu.RUnlock()
-		if !known {
-			// Juju requires unknown IDs to be ignored so callers can safely
-			// retry a stop operation.
-			continue
-		}
 		vmErr := p.vm.StopVM(string(id))
 		networkErr := p.network.TeardownNetwork(string(id))
 		if vmErr != nil && first == nil {
@@ -251,19 +243,23 @@ func (e *environ) PrepareForBootstrap(_ environs.BootstrapContext, _ string) err
 }
 
 func (e *environ) Bootstrap(ctx environs.BootstrapContext, callCtx jujucontext.ProviderCallContext, params environs.BootstrapParams) (*environs.BootstrapResult, error) {
-	_, err := e.StartInstance(callCtx, environs.StartInstanceParams{
-		ControllerUUID: params.ControllerConfig.ControllerUUID(),
-		Constraints:    params.BootstrapConstraints,
-		ImageMetadata:  params.ImageMetadata,
-		Tools:          params.AvailableTools,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("bootstrap start instance: %w", err)
-	}
 	return &environs.BootstrapResult{
 		Arch: "amd64",
 		Base: params.BootstrapBase,
-		CloudBootstrapFinalizer: func(_ environs.BootstrapContext, _ *instancecfg.InstanceConfig, _ environs.BootstrapDialOpts) error {
+		CloudBootstrapFinalizer: func(_ environs.BootstrapContext, cfg *instancecfg.InstanceConfig, _ environs.BootstrapDialOpts) error {
+			if cfg == nil || cfg.MachineId == "" {
+				return stderrors.New("bootstrap finalizer requires instance config with machine ID")
+			}
+			_, err := e.StartInstance(callCtx, environs.StartInstanceParams{
+				ControllerUUID: params.ControllerConfig.ControllerUUID(),
+				Constraints:    params.BootstrapConstraints,
+				ImageMetadata:  params.ImageMetadata,
+				Tools:          params.AvailableTools,
+				InstanceConfig: cfg,
+			})
+			if err != nil {
+				return fmt.Errorf("bootstrap start instance: %w", err)
+			}
 			return nil
 		},
 	}, nil

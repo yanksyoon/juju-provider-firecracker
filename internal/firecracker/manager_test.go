@@ -54,8 +54,8 @@ func TestSDKStartStopUsesMachine(t *testing.T) {
 	if err := m.StartVM(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	if received.JailerCfg == nil || received.JailerCfg.CgroupVersion != "2" {
-		t.Fatalf("missing cgroup-v2 jailer config: %+v", received.JailerCfg)
+	if received.JailerCfg != nil {
+		t.Fatalf("unexpected jailer config on direct SDK path: %+v", received.JailerCfg)
 	}
 	if len(m.ListVMs()) != 1 || !machine.started {
 		t.Fatalf("machine was not started")
