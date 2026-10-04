@@ -2,7 +2,7 @@
 # Install a released Juju Firecracker provider registration binary.
 set -eu
 
-OWNER='canonical'
+OWNER='yanksyoon'
 REPOSITORY='juju-provider-firecracker'
 RELEASES_URL="https://github.com/${OWNER}/${REPOSITORY}/releases"
 
@@ -36,7 +36,7 @@ esac
 VERSION=${1:-${JUJU_FIRECRACKER_VERSION:-}}
 if [ -z "$VERSION" ]; then
     command -v curl >/dev/null 2>&1 || fail 'curl is required'
-    latest_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${RELEASES_URL}/latest") || fail 'could not determine the latest release'
+    latest_url=$(curl -fsSLI --proto '=https' --tlsv1.2 -o /dev/null -w '%{url_effective}' "${RELEASES_URL}/latest") || fail 'could not determine the latest release'
     VERSION=${latest_url##*/}
 fi
 awk -v version="$VERSION" 'BEGIN { exit(version ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ ? 0 : 1) }' || \
@@ -53,9 +53,16 @@ fi
 
 ASSET="juju-firecracker_${VERSION}_linux_${ARCH}"
 BASE_URL="${RELEASES_URL}/download/${VERSION}"
-TMP_DIR=${TMPDIR:-/tmp}/juju-firecracker-install.$$
-trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
-(umask 077 && mkdir "$TMP_DIR") || fail 'cannot create a private temporary directory'
+TMP_BASE=${TMPDIR:-/tmp}
+[ -d "$TMP_BASE" ] && [ -w "$TMP_BASE" ] || fail 'TMPDIR must be an existing writable directory'
+TMP_DIR=$(umask 077 && mktemp -d "$TMP_BASE/juju-firecracker-install.XXXXXX") || \
+    fail 'cannot create a private temporary directory'
+STAGED=''
+cleanup() {
+    rm -rf "$TMP_DIR"
+    [ -z "$STAGED" ] || rm -f "$STAGED" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
 
 curl -fsSL --proto '=https' --tlsv1.2 "${BASE_URL}/${ASSET}" -o "${TMP_DIR}/${ASSET}" || fail "could not download ${ASSET}"
 curl -fsSL --proto '=https' --tlsv1.2 "${BASE_URL}/checksums.txt" -o "${TMP_DIR}/checksums.txt" || fail 'could not download checksums.txt'
@@ -69,25 +76,30 @@ if [ -n "${INSTALL_DIR:-}" ]; then
 else
     DEST_DIR=/usr/local/bin
     if [ ! -d "$DEST_DIR" ] || [ ! -w "$DEST_DIR" ]; then
-        DEST_DIR=${HOME:-.}/.local/bin
+        [ -n "${HOME:-}" ] || fail 'HOME is required when /usr/local/bin is not writable'
+        DEST_DIR=$HOME/.local/bin
     fi
 fi
 case "$DEST_DIR" in
-    ''|*/*..*|/*/../*|../*|.. ) fail 'unsafe INSTALL_DIR' ;;
+    /*) ;;
+    *) fail 'INSTALL_DIR must be an absolute path' ;;
 esac
-mkdir -p "$DEST_DIR" 2>/dev/null || true
+if [ ! -d "$DEST_DIR" ]; then
+    mkdir -p "$DEST_DIR" 2>/dev/null || true
+fi
 DEST="$DEST_DIR/juju-firecracker"
 
 # Install to a sibling temporary path, then atomically replace the destination.
-STAGED="${DEST_DIR}/.juju-firecracker.$$"
 if [ -w "$DEST_DIR" ]; then
+    STAGED=$(mktemp "${DEST_DIR}/.juju-firecracker.XXXXXX") || fail 'cannot create staging file'
     cp "$TMP_DIR/$ASSET" "$STAGED" || fail "cannot stage binary in $DEST_DIR"
     chmod 0755 "$STAGED"
     mv -f "$STAGED" "$DEST"
 else
     command -v sudo >/dev/null 2>&1 || fail "cannot write $DEST_DIR; set INSTALL_DIR to a writable directory"
     sudo -n true 2>/dev/null || fail "cannot write $DEST_DIR without interactive sudo; set INSTALL_DIR"
-    sudo install -m 0755 "$TMP_DIR/$ASSET" "$DEST" || fail "cannot install binary in $DEST_DIR"
+    STAGED=$(sudo mktemp "$DEST_DIR/.juju-firecracker.XXXXXX") || fail 'cannot create privileged staging file'
+    sudo cp "$TMP_DIR/$ASSET" "$STAGED" && sudo chmod 0755 "$STAGED" && sudo mv -f "$STAGED" "$DEST" || fail "cannot install binary in $DEST_DIR"
 fi
 
 printf 'Installed juju-firecracker %s at %s\n' "$VERSION" "$DEST"

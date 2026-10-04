@@ -32,10 +32,11 @@ The installer accepts `vMAJOR.MINOR.PATCH`, rejects other versions, supports
 Linux `amd64` and `arm64`, downloads the matching binary and checksum manifest
 over HTTPS, and verifies the SHA256 before installation. It defaults to
 `/usr/local/bin`, falls back to `$HOME/.local/bin` when that directory is not
-writable, and accepts `INSTALL_DIR`. A privileged fallback requires non-
-interactive `sudo`; otherwise select a writable directory. It stages and
-atomically renames user-writable installs, so a failed verification never
-replaces an existing binary.
+writable, and accepts an absolute `INSTALL_DIR`. `TMPDIR`, when set, must be an
+existing writable directory. A privileged fallback requires non-interactive
+`sudo`; otherwise select a writable directory. It stages and atomically renames
+the downloaded binary, so a failed verification or installation never replaces
+an existing binary.
 
 After installation, ensure the printed path is on the host's Juju provider
 search path. To roll back, install an earlier release. To uninstall, remove the
