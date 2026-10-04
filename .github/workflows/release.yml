@@ -75,15 +75,13 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath \
             -ldflags "-s -w -X main.version=${VERSION}" -o "$name" ./cmd/juju-firecracker
           chmod 0755 "$name"
-          printf '%s\n' "$VERSION" > "version-${ARCH}.txt"
-          sha256sum "$name" "version-${ARCH}.txt" > "checksums-${ARCH}.txt"
+          sha256sum "$name" > "checksums-${ARCH}.txt"
       - name: Upload build artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         with:
           name: release-${{ matrix.arch }}
           path: |
             juju-firecracker_*
-            version-*.txt
             checksums-*.txt
           if-no-files-found: error
           retention-days: 5
@@ -110,8 +108,7 @@ jobs:
           test "$(find . -maxdepth 1 -type f -name 'juju-firecracker_*_linux_*' | wc -l)" -eq 2
           cat checksums-*.txt > checksums.txt
           sort -k2,2 -o checksums.txt checksums.txt
-          printf '%s\n' "$VERSION" > version.txt
-          rm -f checksums-*.txt version-*.txt
+          rm -f checksums-*.txt
       - name: Publish release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
         with:
@@ -122,4 +119,3 @@ jobs:
           files: |
             juju-firecracker_*_linux_*
             checksums.txt
-            version.txt
