@@ -125,7 +125,8 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$VERSION"
-          test "$(find . -maxdepth 1 -type f -name 'juju-firecracker_v*_linux_*' | wc -l)" -eq 4
+          test "$(find . -maxdepth 1 -type f -name 'juju-firecracker_v*_linux_*' | wc -l)" -eq 2
+          test "$(find . -maxdepth 1 -type f -name 'juju-firecracker-bundle_v*_linux_*' | wc -l)" -eq 2
           cat checksums-*.txt > checksums.txt
           sort -k2,2 -o checksums.txt checksums.txt
           rm -f checksums-*.txt
